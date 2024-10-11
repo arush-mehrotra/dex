@@ -1,2 +1,2 @@
-# dex
+# dex.ai
 Drone Exploration
