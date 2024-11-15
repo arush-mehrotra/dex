@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 
 const Navbar = () => {
-  const { user, isAuthenticated, logout } = useAuth0();
+  const { isAuthenticated, logout } = useAuth0();
 
   return (
     <nav className="flex items-center justify-between p-4 border-b">
