@@ -1,13 +1,25 @@
+require('dotenv').config();
+
 var createError = require('http-errors');
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
+var cors = require('cors');
 
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
+var s3Router = require('./routes/s3');
 
 var app = express();
+
+// Basic CORS setup to allow requests from your frontend
+app.use(cors({
+  origin: 'http://localhost:3000', // Replace with your frontend URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
+  credentials: true // Allow cookies and credentials if needed
+}));
+
 
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
@@ -21,6 +33,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
+app.use('/s3', s3Router);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
