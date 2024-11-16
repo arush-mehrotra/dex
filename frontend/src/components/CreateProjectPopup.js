@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import axios from "axios";
 
@@ -7,26 +7,55 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
   const [projectName, setProjectName] = useState("");
   const [file, setFile] = useState(null);
   const [uploadMessage, setUploadMessage] = useState("");
+  const [existingProjects, setExistingProjects] = useState([]);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchExistingProjects();
+    }
+  }, [isOpen]);
+
+  const fetchExistingProjects = async () => {
+    try {
+      const response = await axios.get(`http://localhost:8000/s3/projects/${user.sub}`);
+      setExistingProjects(response.data.projects || []);
+    } catch (error) {
+      console.error("Error fetching existing projects:", error);
+      setExistingProjects([]);
+    }
+  };
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
+    const selectedFile = e.target.files[0];
+    if (selectedFile && selectedFile.name.endsWith(".zip")) {
+      setFile(selectedFile);
+      setUploadMessage(""); // Clear any previous error messages
+    } else {
+      setFile(null);
+      setUploadMessage("Please upload a valid .zip file.");
+    }
   };
 
   const handleFormSubmit = async (e) => {
     e.preventDefault();
 
     if (!projectName || !file) {
-      alert("Please fill out all fields!");
+      setErrorMessage("Please fill out all fields.");
+      return;
+    }
+
+    if (existingProjects.includes(projectName)) {
+      setErrorMessage("A project with this name already exists. Please choose a different name.");
       return;
     }
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("projectName", projectName);
-    formData.append("userId", user.sub); 
+    formData.append("userId", user.sub);
 
     try {
-      // Upload the file to the backend (S3)
       const response = await axios.post("http://localhost:8000/s3/upload", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
@@ -43,6 +72,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
       setProjectName("");
       setFile(null);
       setUploadMessage("");
+      setErrorMessage("");
       onClose();
     } catch (error) {
       console.error("Error uploading file:", error);
@@ -68,21 +98,28 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
               type="text"
               id="projectName"
               value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
+              onChange={(e) => {
+                setProjectName(e.target.value);
+                setErrorMessage(""); // Clear error message on input change
+              }}
               className="w-full border-gray-300 rounded-lg shadow-sm p-2 focus:ring-teal-500 focus:border-teal-500"
               placeholder="Enter project name"
             />
           </div>
+          {errorMessage && (
+            <p className="text-red-500 text-sm mb-4">{errorMessage}</p>
+          )}
           <div className="mb-4">
             <label
               htmlFor="fileUpload"
               className="block text-gray-700 font-medium mb-2"
             >
-              Upload Dataset
+              Upload Dataset (.zip)
             </label>
             <input
               type="file"
               id="fileUpload"
+              accept=".zip"
               onChange={handleFileChange}
               className="w-full"
             />

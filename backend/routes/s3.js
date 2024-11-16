@@ -37,4 +37,33 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
+// Route to get all project names for a given user
+router.get('/projects/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    if (!userId) {
+        return res.status(400).json({ message: "Missing userId parameter" });
+    }
+
+    const params = {
+        Bucket: process.env.S3_BUCKET_NAME,
+        Prefix: `${userId}/`, // Filter objects by user ID prefix
+        Delimiter: '/' // Ensure only top-level folders (projects) are returned
+    };
+
+    try {
+        const data = await s3.listObjectsV2(params).promise();
+
+        // Extract unique project names from the CommonPrefixes array
+        const projectNames = (data.CommonPrefixes || []).map(prefix =>
+            prefix.Prefix.split('/')[1] // Extract the project name (second segment)
+        ).filter(Boolean); // Remove any undefined or empty values
+
+        res.status(200).json({ projects: projectNames });
+    } catch (error) {
+        console.error('Error fetching project names:', error);
+        res.status(500).json({ message: 'Error fetching project names', error });
+    }
+});
+
 module.exports = router;
