@@ -6,7 +6,8 @@ const Navbar = () => {
   const { isAuthenticated, logout } = useAuth0();
 
   return (
-    <nav className="flex items-center justify-between p-4 border-b">
+    <nav className="flex items-center justify-between px-10 py-4 border-b">
+      {/* Left-aligned links */}
       <div className="flex space-x-4">
         <Link to="/" className="text-teal-500 font-semibold">
           Home
@@ -15,6 +16,8 @@ const Navbar = () => {
           My Projects
         </Link>
       </div>
+
+      {/* Right-aligned buttons */}
       {isAuthenticated && (
         <div className="flex items-center space-x-4">
           <Link to="/profile" className="font-semibold hover:underline">

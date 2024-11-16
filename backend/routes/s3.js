@@ -15,10 +15,15 @@ const upload = multer();
 // Route to upload a file to S3
 router.post('/upload', upload.single('file'), async (req, res) => {
     const file = req.file;
+    const { userId, projectName } = req.body;
+
+    if (!userId || !projectName) {
+        return res.status(400).json({ message: "Missing userId or projectName" });
+    }
 
     const params = {
         Bucket: process.env.S3_BUCKET_NAME,
-        Key: file.originalname,
+        Key: `${userId}/${projectName}/${file.originalname}`,
         Body: file.buffer,
         ContentType: file.mimetype
     };
