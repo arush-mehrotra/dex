@@ -66,4 +66,43 @@ router.get('/projects/:userId', async (req, res) => {
     }
 });
 
+// Route to delete a project and all its files
+router.delete('/projects/:userId/:projectName', async (req, res) => {
+    const { userId, projectName } = req.params;
+
+    if (!userId || !projectName) {
+        return res.status(400).json({ message: "Missing userId or projectName" });
+    }
+
+    const params = {
+        Bucket: process.env.S3_BUCKET_NAME,
+        Prefix: `${userId}/${projectName}/` // Filter objects by user ID and project name prefix
+    };
+
+    try {
+        // List all objects in the project folder
+        const listedObjects = await s3.listObjectsV2(params).promise();
+
+        if (!listedObjects.Contents || listedObjects.Contents.length === 0) {
+            return res.status(404).json({ message: "Project not found or already empty." });
+        }
+
+        // Create delete parameters
+        const deleteParams = {
+            Bucket: process.env.S3_BUCKET_NAME,
+            Delete: {
+                Objects: listedObjects.Contents.map(({ Key }) => ({ Key }))
+            }
+        };
+
+        // Delete all objects in the project folder
+        await s3.deleteObjects(deleteParams).promise();
+
+        res.status(200).json({ message: `Project "${projectName}" deleted successfully.` });
+    } catch (error) {
+        console.error('Error deleting project:', error);
+        res.status(500).json({ message: 'Error deleting project', error });
+    }
+});
+
 module.exports = router;
