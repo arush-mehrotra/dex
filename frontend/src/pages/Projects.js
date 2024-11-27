@@ -57,7 +57,7 @@ const Projects = () => {
   return (
     <div>
       <Navbar />
-      <div className="container mx-auto mt-8 p-4">
+      <div className="container p-10">
         <h1 className="text-2xl font-bold mb-4">Your Projects</h1>
         {loading ? (
           <div>Loading projects...</div>
