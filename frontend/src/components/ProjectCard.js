@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 const ProjectCard = ({ project, onDelete }) => {
   const { user } = useAuth0(); // Get the user object from Auth0
   const [showDetails, setShowDetails] = useState(false);
-  const [files, setFiles] = useState([]);
   const [objFileUrl, setObjFileUrl] = useState(null); // URL of the .obj file
   const navigate = useNavigate();
 
@@ -40,7 +39,6 @@ const ProjectCard = ({ project, onDelete }) => {
       // Fetch the files for the given project when details are toggled
       fetchProjectFiles(user.sub, project) // Use Auth0 user ID (`sub`) as `userId`
         .then((fileList) => {
-          setFiles(fileList);
           // Find the .obj file URL
           const objFile = fileList.find((file) => file.fileName.endsWith(".obj"));
           if (objFile) {

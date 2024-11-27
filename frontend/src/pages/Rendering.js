@@ -4,6 +4,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader";
 import { useLoader } from "@react-three/fiber";
+import Navbar from "../components/Navbar";
 
 const OBJModel = ({ objUrl }) => {
   const obj = useLoader(OBJLoader, objUrl);
@@ -12,23 +13,31 @@ const OBJModel = ({ objUrl }) => {
 
 const Rendering = () => {
   const location = useLocation();
-  const { objFileUrl } = location.state || {}; // Access objFileUrl passed via state
-
-  console.log("Rendering objFileUrl:", objFileUrl);
+  const { objFileUrl } = location.state || {};
 
   if (!objFileUrl) {
-    return <p>Error: No .obj file URL provided</p>;
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <p className="text-center text-lg">No object file URL provided.</p>
+      </div>
+    );
   }
 
   return (
-    <div style={{ width: "100vw", height: "100vh" }}>
-      <Canvas>
-        <ambientLight intensity={0.5} />
-        <directionalLight position={[10, 10, 5]} intensity={1} />
-        <OBJModel objUrl={objFileUrl} />
-        <OrbitControls />
-      </Canvas>
+    <div>
+        <Navbar />
+        <div className="flex items-center justify-center h-screen overflow-hidden">
+            <div className="w-4/5 h-4/5 border-4 border-teal-500 rounded-lg bg-black shadow-lg relative">
+                <Canvas>
+                <ambientLight intensity={0.5} />
+                <directionalLight position={[10, 10, 5]} intensity={1} />
+                <OBJModel objUrl={objFileUrl} />
+                <OrbitControls />
+                </Canvas>
+            </div>
+        </div>
     </div>
+
   );
 };
 
