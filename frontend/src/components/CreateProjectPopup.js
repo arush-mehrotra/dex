@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import axios from "axios";
 
@@ -10,13 +10,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
   const [existingProjects, setExistingProjects] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchExistingProjects();
-    }
-  }, [isOpen]);
-
-  const fetchExistingProjects = async () => {
+  const fetchExistingProjects = useCallback(async () => {
     try {
       const response = await axios.get(`http://localhost:8000/s3/projects/${user.sub}`);
       setExistingProjects(response.data.projects || []);
@@ -24,7 +18,13 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
       console.error("Error fetching existing projects:", error);
       setExistingProjects([]);
     }
-  };
+  }, [user.sub]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchExistingProjects();
+    }
+  }, [isOpen, fetchExistingProjects]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
