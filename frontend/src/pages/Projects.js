@@ -37,8 +37,7 @@ const Projects = () => {
       console.error("Error deleting project:", error);
       alert("Failed to delete the project. Please try again later.");
     }
-
-  }
+  };
 
   useEffect(() => {
     if (isLoading) return;
@@ -64,11 +63,15 @@ const Projects = () => {
         ) : error ? (
           <div className="text-red-500">{error}</div>
         ) : projects.length > 0 ? (
-          <ul className="list-disc">
+          <div className="flex flex-wrap items-start gap-8">
             {projects.map((project, index) => (
-              <ProjectCard project={project} onDelete={handleDelete} />
+              <ProjectCard
+                key={project}
+                project={project}
+                onDelete={handleDelete}
+              />
             ))}
-          </ul>
+          </div>
         ) : (
           <div>No projects found. Start creating one!</div>
         )}

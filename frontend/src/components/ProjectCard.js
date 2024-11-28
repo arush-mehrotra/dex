@@ -3,11 +3,11 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useNavigate } from "react-router-dom";
 
 const ProjectCard = ({ project, onDelete }) => {
-  const { user } = useAuth0(); // Get the user object from Auth0
+  const { user } = useAuth0();
   const [showDetails, setShowDetails] = useState(false);
   const [objFileUrl, setObjFileUrl] = useState(null); // URL of the .obj file
+  const [objFileStatus, setObjFileStatus] = useState("loading"); // 'loading', 'available', 'unavailable'
   const navigate = useNavigate();
-
   const toggleDetails = () => {
     setShowDetails(!showDetails);
   };
@@ -17,8 +17,6 @@ const ProjectCard = ({ project, onDelete }) => {
       onDelete(project);
     }
   };
-
-  // Define the fetchProjectFiles function within the component
   const fetchProjectFiles = async (userId, projectName) => {
     try {
       const response = await fetch(`http://localhost:8000/s3/projects/${userId}/${projectName}/files`);
@@ -36,24 +34,28 @@ const ProjectCard = ({ project, onDelete }) => {
 
   useEffect(() => {
     if (showDetails && user) {
-      // Fetch the files for the given project when details are toggled
-      fetchProjectFiles(user.sub, project) // Use Auth0 user ID (`sub`) as `userId`
+      setObjFileStatus("loading"); // Set loading state while fetching
+      fetchProjectFiles(user.sub, project)
         .then((fileList) => {
-          // Find the .obj file URL
           const objFile = fileList.find((file) => file.fileName.endsWith(".obj"));
           if (objFile) {
-            setObjFileUrl(objFile.url); // Assume file object has a URL property
+            setObjFileUrl(objFile.url);
+            setObjFileStatus("available");
+          } else {
+            setObjFileStatus("unavailable");
           }
         })
         .catch((error) => {
           console.error("Error fetching files:", error);
+          setObjFileStatus("unavailable"); // Handle error case
         });
     }
   }, [showDetails, user, project]);
 
   const handleViewRendering = () => {
     if (objFileUrl) {
-      navigate("/rendering", { state: { objFileUrl } }); // Pass objFileUrl via state
+      const renderingUrl = `/rendering?objFileUrl=${encodeURIComponent(objFileUrl)}`;
+      window.open(renderingUrl, "_blank"); // Open the rendering view in a new tab
     }
   };
 
@@ -74,15 +76,20 @@ const ProjectCard = ({ project, onDelete }) => {
       </button>
       {showDetails && (
         <div className="mt-4 p-3 border-t border-gray-200 text-gray-700">
-          <p><strong>Description:</strong> {project.description || "No additional details provided."}</p>
           <p><strong>Created On:</strong> {project.createdOn || "Unknown date"}</p>
-          <p><strong>Status:</strong> {project.status || "No status available."}</p>
-          {objFileUrl && (
+
+          {objFileStatus === "loading" && <p className="text-gray-500 mt-2">Loading...</p>}
+          {objFileStatus === "available" && (
             <button
               onClick={handleViewRendering}
               className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200"
             >
               View 3D Rendering
+            </button>
+          )}
+          {objFileStatus === "unavailable" && (
+            <button className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200">
+              Train 3D Model
             </button>
           )}
         </div>

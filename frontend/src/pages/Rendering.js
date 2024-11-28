@@ -13,14 +13,11 @@ const OBJModel = ({ objUrl }) => {
 
 const Rendering = () => {
   const location = useLocation();
-  const { objFileUrl } = location.state || {};
+  const params = new URLSearchParams(location.search);
+  const objFileUrl = params.get("objFileUrl");
 
   if (!objFileUrl) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <p className="text-center text-lg">No object file URL provided.</p>
-      </div>
-    );
+    return <p className="text-center mt-10">No object file URL provided.</p>;
   }
 
   return (
