@@ -99,7 +99,7 @@ def process_data(input_path, output_dir, data_type):
 
 def train_model(data_dir, downscale_factor=4):
     """
-    Train NeRF Splatfacto model.
+    Train NeRF Nerfacto model.
     
     Args:
         data_dir (str): Directory containing processed data
@@ -110,7 +110,7 @@ def train_model(data_dir, downscale_factor=4):
     """
     train_command = [
         'ns-train', 
-        'splatfacto', 
+        'nerfacto', 
         'nerfstudio-data', 
         '--data', data_dir, 
         '--downscale-factor', str(downscale_factor)
@@ -118,7 +118,7 @@ def train_model(data_dir, downscale_factor=4):
     
     return run_command(
         train_command, 
-        "NeRF Splatfacto model training failed"
+        "NeRF Nerfacto model training failed"
     )
 
 def main():
