@@ -60,7 +60,7 @@ const ProjectCard = ({ project, onDelete }) => {
   };
 
   return (
-    <div className="max-w-sm w-full bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition-shadow duration-200">
+    <div className=" bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition-shadow duration-200">
       <h2 className="text-xl font-semibold text-teal-600">{project}</h2>
       <button
         onClick={toggleDetails}
