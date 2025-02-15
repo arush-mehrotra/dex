@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import Navbar from "../components/Navbar";
 import CreateProjectPopup from "../components/CreateProjectPopup";
+import HowItWorks from "../components/HowItWorks";
 
 const Home = () => {
   const { user, isAuthenticated, loginWithRedirect, isLoading } = useAuth0();
@@ -45,6 +46,10 @@ const Home = () => {
             +
           </span>
         </button>
+      </div>
+
+      <div className="px-10 py-6">
+        <HowItWorks />
       </div>
 
       {/* Popup Component */}
