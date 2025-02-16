@@ -12,7 +12,8 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
 
   const fetchExistingProjects = useCallback(async () => {
     try {
-      const response = await axios.get(`http://localhost:8000/s3/projects/${user.sub}`);
+      const userId = user.sub.split('|')[1];
+      const response = await axios.get(`http://localhost:8000/s3/projects/${userId}`);
       setExistingProjects(response.data.projects || []);
     } catch (error) {
       console.error("Error fetching existing projects:", error);
@@ -53,7 +54,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("projectName", projectName);
-    formData.append("userId", user.sub);
+    formData.append("userId", user.sub.split('|')[1]);
 
     try {
       const response = await axios.post("http://localhost:8000/s3/upload", formData, {

@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
-import { useNavigate } from "react-router-dom";
 
-const ProjectCard = ({ project, onDelete }) => {
+const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   const { user } = useAuth0();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [objFileUrl, setObjFileUrl] = useState(null);
   const [objFileStatus, setObjFileStatus] = useState("loading");
-  const navigate = useNavigate();
 
   const handleDelete = () => {
     if (window.confirm(`Are you sure you want to delete the project "${project}"?`)) {
@@ -17,6 +15,7 @@ const ProjectCard = ({ project, onDelete }) => {
 
   const fetchProjectFiles = async (userId, projectName) => {
     try {
+      const userId = user.sub.split('|')[1];
       const response = await fetch(`http://localhost:8000/s3/projects/${userId}/${projectName}/files`);
       if (!response.ok) {
         throw new Error(`Failed to fetch files: ${response.statusText}`);
@@ -32,7 +31,7 @@ const ProjectCard = ({ project, onDelete }) => {
   useEffect(() => {
     if (isModalOpen && user) {
       setObjFileStatus("loading");
-      fetchProjectFiles(user.sub, project)
+      fetchProjectFiles( user.sub.split('|')[1], project)
         .then((fileList) => {
           const objFile = fileList.find((file) => file.fileName.endsWith(".obj"));
           if (objFile) {
@@ -103,9 +102,15 @@ const ProjectCard = ({ project, onDelete }) => {
                 </button>
               )}
               {objFileStatus === "unavailable" && (
-                <button className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200">
-                  Train 3D Model
-                </button>
+                <>
+                  {!instanceRunning ? (
+                    <p className="mt-4 text-gray-500 text-sm">Start the instance to train your model</p>
+                  ) : (
+                    <button className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200">
+                      Train 3D Model
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
