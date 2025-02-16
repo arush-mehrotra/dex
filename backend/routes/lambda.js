@@ -87,7 +87,7 @@ async function dockerSetup(instance_ip) {
         console.log('Success pulling docker image')
     }
 }
-    
+
 async function awsSetup(instance_ip) {
     aws_cli_download_command = 'pip3 install awscli --upgrade --user';
 
@@ -95,7 +95,6 @@ async function awsSetup(instance_ip) {
     commandOutput = await runCommandviaSSH(instance_ip, aws_cli_download_command);
     if (commandOutput.command_status === "fail") {
         console.log("Error downloading aws cli");
-        return commandOutput;
     } else {
         console.log('Success downloading aws cli');
     }
@@ -104,16 +103,15 @@ async function awsSetup(instance_ip) {
     // aws_secret_access_key_command = `export AWS_SECRET_ACCESS_KEY=${process.env.AWS_SECRET_ACCESS_KEY}`
     // aws_region_command = `export AWS_REGION=${process.env.AWS_REGION}`
 
-    aws_access_key_command = `echo AWS_ACCESS_KEY_ID=${process.env.AWS_ACCESS_KEY_ID} ~/.bashrc`
-    aws_secret_access_key_command = `echo AWS_SECRET_ACCESS_KEY=${process.env.AWS_SECRET_ACCESS_KEY} ~/.bashrc`
-    aws_region_command = `echo AWS_REGION=${process.env.AWS_REGION} ~/.bashrc`
+    aws_dir_command = 'mkdir .aws; cd .aws; touch config; touch credentials';
+    write_config_command = `echo [default] >> config; echo region=${process.env.AWS_REGION} >> config`
+    write_credentials_command = `echo [default] >> credentials; echo aws_access_key_id=${process.env.AWS_ACCESS_KEY_ID} >> credentials; echo aws_secret_access_key=${process.env.AWS_SECRET_ACCESS_KEY} >> credentials`
 
-    const concatenatedCommand = `${aws_access_key_command}; ${aws_secret_access_key_command}; ${aws_region_command}`;
+    const concatenatedCommand = `${aws_dir_command}; ${write_config_command}; ${write_credentials_command}`;
 
     commandOutput = await runCommandviaSSH(instance_ip, concatenatedCommand);
     if (commandOutput.command_status === "fail") {
         console.log("Error creating environment variables");
-        return commandOutput;
     } else {
         console.log('Success creating environment variables')
     }
@@ -169,6 +167,7 @@ router.post('/train', async (req, res) => {
         }
         console.log("File downloaded successfully to the instance:", localFilePath);
         
+        
         // TODO: run the docker run command
         // docker_run_command = "docker run ..."
         // commandOutput = await runCommandviaSSH(instance_ip, docker_run_command);
@@ -180,7 +179,8 @@ router.post('/train', async (req, res) => {
 
         // TODO: run nerf pre-processings steps / nerf commands on the file
 
-
+        res.status(200).json({localFilePath});
+        return;
     } catch (error) {   
         // Detailed error logging
         console.error('Full error response:', {
