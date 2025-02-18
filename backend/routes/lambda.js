@@ -70,70 +70,6 @@ async function runCommandviaSSH(instance_ip, commandString) {
   }
 }
 
-// async function runCommandsViaSSH(instance_ip, commandStrings) {
-//   console.log("Running commands on Lambda Labs instance...");
-//   const username = "ubuntu";
-//   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
-
-//   try {
-//     // Connect to instance
-//     await ssh.connect({
-//       host: instance_ip,
-//       username: username,
-//       privateKey: privateKey,
-//     });
-//     console.log("Connected to the Lambda Labs instance.");
-
-//     // Initialize an array to store results of each command
-//     const results = [];
-
-//     // Loop through each command string and execute it
-//     for (const commandString of commandStrings) {
-//       const result = await ssh.execCommand(commandString);
-//       console.log(`STDOUT for command '${commandString}':`, result.stdout);
-//       console.error(`STDERR for command '${commandString}':`, result.stderr);
-
-//       // If there's anything in stderr, we should consider it a failure for that command
-//       if (result.stderr) {
-//         results.push({
-//           command_status: "fail",
-//           message: `Command '${commandString}' failed. Stderr output`,
-//           result: {
-//             stdout: result.stdout,
-//             stderr: result.stderr,
-//           },
-//         });
-//       } else {
-//         results.push({
-//           command_status: "success",
-//           message: `Command '${commandString}' executed successfully`,
-//           result: {
-//             stdout: result.stdout,
-//             stderr: result.stderr,
-//           },
-//         });
-//       }
-//     }
-
-//     // Return all results
-//     return results;
-//   } catch (error) {
-//     console.error("Error running commands on the instance:", error);
-//     return {
-//       command_status: "fail",
-//       message: "Error running commands on the instance",
-//       error: {
-//         status: error.response?.status,
-//         statusText: error.response?.statusText,
-//         details: error.response?.data,
-//         message: error.message,
-//       },
-//     };
-//   } finally {
-//     ssh.dispose();
-//   }
-// }
-
 async function dockerSetup(instance_ip) {
   // use bash via ssh to run docker commands to pull in a docker image and start it
   docker_pull_command =
@@ -157,13 +93,8 @@ async function awsSetup(instance_ip) {
   if (commandOutput.command_status === "fail") {
     console.log("Error downloading aws cli");
     return commandOutput;
-    ß;
   }
   console.log("Success downloading aws cli");
-
-  // aws_access_key_command = `export AWS_ACCESS_KEY_ID=${process.env.AWS_ACCESS_KEY_ID}`
-  // aws_secret_access_key_command = `export AWS_SECRET_ACCESS_KEY=${process.env.AWS_SECRET_ACCESS_KEY}`
-  // aws_region_command = `export AWS_REGION=${process.env.AWS_REGION}`
 
   aws_dir_command = "mkdir .aws; cd .aws; touch config; touch credentials";
   write_config_command = `echo [default] >> config; echo region=${process.env.AWS_REGION} >> config`;
@@ -205,7 +136,7 @@ async function uploadFileToS3(instance_ip, localFilePath, bucketFilePath) {
 }
 
 async function lambdaTrainRoutine(instance_ip, projectName, userId) {
-  
+
   console.log("Running training loop on Lambda Labs instance...");
   const ssh = new NodeSSH(); // ANSH
   const username = "ubuntu";
