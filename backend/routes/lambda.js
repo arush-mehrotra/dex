@@ -193,6 +193,94 @@ async function downloadFileFromS3(instance_ip, localFilePath, bucketFilePath) {
   }
 }
 
+async function test_full(instance_ip) {
+  console.log("Running command on Lambda Labs instance...");
+  const username = "ubuntu";
+  const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
+  const hardCodeId = "102532651229287036481";
+  const hardCodeProject = "test_project";
+  const hardCodeFolder = "test";
+
+  try {
+    // Connect to instance
+    await ssh.connect({
+      host: instance_ip,
+      username: username,
+      privateKey: privateKey,
+    });
+
+    testCommand0 = "cd " + hardCodeId + "/" + hardCodeProject;
+    const result1 = await ssh.execCommand(testCommand0);
+    if (result1.stderr) {
+      throw new Error("cd failed");
+    }
+
+    testCommand1 =
+      'sudo docker run \
+            --gpus all \
+            -u "$(id -u)" \
+            -v "$(pwd)":/workspace \
+            -v /home/ubuntu/.cache:/home/user/.cache \
+            -p 7007:7007 \
+            --rm \
+            -d \
+            --shm-size=40gb \
+            -e XDG_DATA_HOME=/workspace/.local/share \
+            -e XDG_CACHE_HOME=/workspace/.cache \
+            -e MPLCONFIGDIR=/workspace/.config/matplotlib \
+            ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
+
+    commandOuptut = await ssh.execCommand(testCommand1);
+    if (commandOuptut.stderr) {
+      throw new Error("docker run fail");
+    }
+    const containerId = commandOuptut.stdout;
+    testCommand2 =
+      "sudo docker exec " +
+      containerId +
+      ' bash -c "cd /workspace/' +
+      hardCodeId +
+      "/" +
+      hardCodeProject +
+      ' && ns-process-data images --data ' +
+      hardCodeFolder +
+      ' --output-dir ns-process-output"';
+    
+
+    const result = await ssh.execCommand(testCommand2);
+    console.log("PRINT", result.stdout);
+
+    // if anything in std.err, we should fail
+    if (result.stderr) {
+      console.log(result.stderr);
+      throw new Error("Docker exec failed");
+    }
+
+    return {
+      command_status: "success",
+      message: "Command executed successfully",
+      result: {
+        stdout: result.stdout,
+        stderr: result.stderr,
+      },
+    };
+  } catch (error) {
+    console.error("Error running command on the instance:", error);
+    return {
+      command_status: "fail",
+      message: "Error running command on the instance",
+      error: {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        details: error.response?.data,
+        message: error.message,
+      },
+    };
+  } finally {
+    ssh.dispose();
+  }
+}
+
 async function test(instance_ip) {
   const hardCodeId = "102532651229287036481";
   const hardCodeProject = "test_project";
@@ -245,7 +333,7 @@ async function test(instance_ip) {
 
 router.post("/test", async (req, res) => {
   try {
-    await test("129.213.145.88");
+    await test_full("129.213.145.88");
     res.status(200).json({});
   } catch (error) {}
 });
