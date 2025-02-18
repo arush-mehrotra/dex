@@ -31,9 +31,14 @@ async function runCommandviaSSH(instance_ip, commandString) {
     });
     console.log("Connected to the Lambda Labs instance.");
 
-    const result = await ssh.execCommand(commandString);
-    console.log("STDOUT:", result.stdout);
-    console.error("STDERR:", result.stderr);
+    await ssh.exec(commandString, [], {
+      onStdout(chunk) {
+        console.log(`STDOUT: ${chunk.toString()}`);
+      },
+      onStderr(chunk) {
+        console.error(`STDERR: ${chunk.toString()}`);
+      },
+    });
 
     // if anything in std.err, we should fail
     if (result.stderr) {
@@ -193,13 +198,14 @@ async function downloadFileFromS3(instance_ip, localFilePath, bucketFilePath) {
   }
 }
 
-async function test_full(instance_ip) {
+async function lambdaTrainRoutine(instance_ip) {
   console.log("Running command on Lambda Labs instance...");
   const username = "ubuntu";
   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
   const hardCodeId = "102532651229287036481";
   const hardCodeProject = "test_project";
   const hardCodeFolder = "test";
+  const hardCodeOutputDir = "ns-process-output";
 
   try {
     // Connect to instance
@@ -210,8 +216,8 @@ async function test_full(instance_ip) {
     });
 
     testCommand0 = "cd " + hardCodeId + "/" + hardCodeProject;
-    const result1 = await ssh.execCommand(testCommand0);
-    if (result1.stderr) {
+    var result = await ssh.execCommand(testCommand0);
+    if (result.stderr) {
       throw new Error("cd failed");
     }
 
@@ -230,24 +236,14 @@ async function test_full(instance_ip) {
             -e MPLCONFIGDIR=/workspace/.config/matplotlib \
             ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
 
-    commandOuptut = await ssh.execCommand(testCommand1);
-    if (commandOuptut.stderr) {
+    result = await ssh.execCommand(testCommand1);
+    if (result.stderr) {
       throw new Error("docker run fail");
     }
-    const containerId = commandOuptut.stdout;
-    testCommand2 =
-      "sudo docker exec " +
-      containerId +
-      ' bash -c "cd /workspace/' +
-      hardCodeId +
-      "/" +
-      hardCodeProject +
-      ' && ns-process-data images --data ' +
-      hardCodeFolder +
-      ' --output-dir ns-process-output"';
-    
+    const containerId = result.stdout;
+    testCommand2 = `sudo docker exec ${containerId} bash -c 'cd /workspace/${hardCodeId}/${hardCodeProject} && ns-process-data images --data "${hardCodeFolder}" --output-dir "${hardCodeOutputDir}"'`;
 
-    const result = await ssh.execCommand(testCommand2);
+    result = await ssh.execCommand(testCommand2);
     console.log("PRINT", result.stdout);
 
     // if anything in std.err, we should fail
@@ -256,6 +252,15 @@ async function test_full(instance_ip) {
       throw new Error("Docker exec failed");
     }
 
+    testCommandTalkTuah = `sudo docker exec ${containerId} bash -c ' cd /workspace/${hardCodeId}/${hardCodeProject} && ns-train nerfacto --data "${hardCodeOutputDir}"'`;
+    result = await ssh.execCommand(testCommandTalkTuah);
+    console.log("PRIN2T", result.stdout);
+    if (result.stderr) {
+        console.log(result.stderr);
+        throw new Error("Docker exec failed");
+    }
+
+    // TODO: kill docker container at end
     return {
       command_status: "success",
       message: "Command executed successfully",
@@ -333,7 +338,7 @@ async function test(instance_ip) {
 
 router.post("/test", async (req, res) => {
   try {
-    await test_full("129.213.145.88");
+    await lambdaTrainRoutine("129.213.145.88");
     res.status(200).json({});
   } catch (error) {}
 });
