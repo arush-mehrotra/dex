@@ -93,7 +93,7 @@ async function runCommandviaSSH(instance_ip, commandString) {
 //       console.log(`STDOUT for command '${commandString}':`, result.stdout);
 //       console.error(`STDERR for command '${commandString}':`, result.stderr);
 
-//       // If there’s anything in stderr, we should consider it a failure for that command
+//       // If there's anything in stderr, we should consider it a failure for that command
 //       if (result.stderr) {
 //         results.push({
 //           command_status: "fail",
@@ -192,17 +192,26 @@ async function downloadFileFromS3(instance_ip, localFilePath, bucketFilePath) {
   }
 }
 
-async function lambdaTrainRoutine(instance_ip, projectName, userId) {
-  // const userId = "102532651229287036481";
-  // const projectName = "test_project";
-  // const projectName = "test";
+async function uploadFileToS3(instance_ip, localFilePath, bucketFilePath) {
+  const uploadCommand = `aws s3 cp --recursive ${localFilePath} ${bucketFilePath}`;
+  commandOutput = await runCommandviaSSH(instance_ip, uploadCommand);
+  if (commandOutput.command_status === "fail") {
+    console.log("Error uploading files to S3");
+    return commandOutput;
+  } else {
+    console.log("Success uploading files to S3");
+    return commandOutput;
+  }
+}
 
+async function lambdaTrainRoutine(instance_ip, projectName, userId) {
+  
   console.log("Running training loop on Lambda Labs instance...");
   const ssh = new NodeSSH(); // ANSH
   const username = "ubuntu";
   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
   const processedDataOutputDir = projectName + "-output";
-
+  const meshOutputDir = projectName + "-mesh";
   try {
     // Connect to instance
     await ssh.connect({
@@ -251,9 +260,17 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     }
 
     // train on processed data
-    commandString = `sudo docker exec ${containerId} bash -c ' cd /workspace/${userId}/${projectName} && ns-train nerfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True'`;
+    commandString = `sudo docker exec ${containerId} bash -c ' cd /workspace/${userId}/${projectName} && ns-train nerfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True'`;
     result = await ssh.execCommand(commandString);
     console.log("[Train]", result.stdout);
+    if (result.stderr) {
+      throw new Error("Docker exec failed", result.stderr);
+    }
+
+    // export the mesh
+    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-export poisson --load-config CONFIG.yml --output-dir "${meshOutputDir}"'`;
+    result = await ssh.execCommand(commandString);
+    console.log("[Export Mesh]", result.stdout);
     if (result.stderr) {
       throw new Error("Docker exec failed", result.stderr);
     }
@@ -355,7 +372,29 @@ router.post("/train", async (req, res) => {
       );
     }
     console.log("Success running training loop");
-    res.status(200).json({ trainResult });
+
+    // Write mesh to s3
+    const meshOutputDir = projectName + "-mesh";
+    const meshFilePath = `/home/ubuntu/${userId}/${projectName}/${meshOutputDir}`;
+    const meshBucketFilePath = `s3://${bucketName}/${userId}/${projectName}/${meshOutputDir}`;
+    const s3UploadOutput = await uploadFileToS3(
+      runningInstance.ip,
+      meshFilePath,
+      meshBucketFilePath
+    );
+    if (s3UploadOutput.command_status === "fail") {
+      throw new Error(
+        `Failed to upload mesh to S3: ${s3UploadOutput.error.message}`
+      );
+    }
+    console.log("Mesh uploaded successfully to S3");
+
+    res.status(200).json({ 
+      status: "success",
+      message: "Training completed and mesh uploaded",
+      trainResult,
+      meshPath: `${userId}/${projectName}/${meshOutputDir}`
+    });
     return;
   } catch (error) {
     // Detailed error logging
