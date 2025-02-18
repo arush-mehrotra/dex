@@ -10,7 +10,6 @@ const s3 = new AWS.S3({
   region: process.env.AWS_REGION,
 });
 const router = express.Router();
-const ssh = new NodeSSH();
 
 const SSH_KEY_PATH = process.env.SSH_KEY_PATH;
 const LAMBDA_LABS_API_KEY = process.env.LAMBDA_LABS_API_KEY;
@@ -18,6 +17,7 @@ const INSTANCE_TYPE = process.env.LAMBDA_LABS_INSTANCE_TYPE;
 const LAMBDA_LABS_SSH_KEY = process.env.LAMBDA_LABS_SSH_KEY;
 
 async function runCommandviaSSH(instance_ip, commandString) {
+  const ssh = new NodeSSH(); // ANSH
   console.log("Running command on Lambda Labs instance...");
   const username = "ubuntu";
   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
@@ -31,15 +31,7 @@ async function runCommandviaSSH(instance_ip, commandString) {
     });
     console.log("Connected to the Lambda Labs instance.");
 
-    await ssh.exec(commandString, [], {
-      onStdout(chunk) {
-        console.log(`STDOUT: ${chunk.toString()}`);
-      },
-      onStderr(chunk) {
-        console.error(`STDERR: ${chunk.toString()}`);
-      },
-    });
-
+    const result = await ssh.execCommand(commandString);
     // if anything in std.err, we should fail
     if (result.stderr) {
       return {
@@ -52,6 +44,7 @@ async function runCommandviaSSH(instance_ip, commandString) {
       };
     }
 
+    console.log("Command executed on Lambda Labs instance.");
     return {
       command_status: "success",
       message: "Command executed successfully",
@@ -77,69 +70,69 @@ async function runCommandviaSSH(instance_ip, commandString) {
   }
 }
 
-async function runCommandsViaSSH(instance_ip, commandStrings) {
-  console.log("Running commands on Lambda Labs instance...");
-  const username = "ubuntu";
-  const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
+// async function runCommandsViaSSH(instance_ip, commandStrings) {
+//   console.log("Running commands on Lambda Labs instance...");
+//   const username = "ubuntu";
+//   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
 
-  try {
-    // Connect to instance
-    await ssh.connect({
-      host: instance_ip,
-      username: username,
-      privateKey: privateKey,
-    });
-    console.log("Connected to the Lambda Labs instance.");
+//   try {
+//     // Connect to instance
+//     await ssh.connect({
+//       host: instance_ip,
+//       username: username,
+//       privateKey: privateKey,
+//     });
+//     console.log("Connected to the Lambda Labs instance.");
 
-    // Initialize an array to store results of each command
-    const results = [];
+//     // Initialize an array to store results of each command
+//     const results = [];
 
-    // Loop through each command string and execute it
-    for (const commandString of commandStrings) {
-      const result = await ssh.execCommand(commandString);
-      console.log(`STDOUT for command '${commandString}':`, result.stdout);
-      console.error(`STDERR for command '${commandString}':`, result.stderr);
+//     // Loop through each command string and execute it
+//     for (const commandString of commandStrings) {
+//       const result = await ssh.execCommand(commandString);
+//       console.log(`STDOUT for command '${commandString}':`, result.stdout);
+//       console.error(`STDERR for command '${commandString}':`, result.stderr);
 
-      // If there’s anything in stderr, we should consider it a failure for that command
-      if (result.stderr) {
-        results.push({
-          command_status: "fail",
-          message: `Command '${commandString}' failed. Stderr output`,
-          result: {
-            stdout: result.stdout,
-            stderr: result.stderr,
-          },
-        });
-      } else {
-        results.push({
-          command_status: "success",
-          message: `Command '${commandString}' executed successfully`,
-          result: {
-            stdout: result.stdout,
-            stderr: result.stderr,
-          },
-        });
-      }
-    }
+//       // If there’s anything in stderr, we should consider it a failure for that command
+//       if (result.stderr) {
+//         results.push({
+//           command_status: "fail",
+//           message: `Command '${commandString}' failed. Stderr output`,
+//           result: {
+//             stdout: result.stdout,
+//             stderr: result.stderr,
+//           },
+//         });
+//       } else {
+//         results.push({
+//           command_status: "success",
+//           message: `Command '${commandString}' executed successfully`,
+//           result: {
+//             stdout: result.stdout,
+//             stderr: result.stderr,
+//           },
+//         });
+//       }
+//     }
 
-    // Return all results
-    return results;
-  } catch (error) {
-    console.error("Error running commands on the instance:", error);
-    return {
-      command_status: "fail",
-      message: "Error running commands on the instance",
-      error: {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        details: error.response?.data,
-        message: error.message,
-      },
-    };
-  } finally {
-    ssh.dispose();
-  }
-}
+//     // Return all results
+//     return results;
+//   } catch (error) {
+//     console.error("Error running commands on the instance:", error);
+//     return {
+//       command_status: "fail",
+//       message: "Error running commands on the instance",
+//       error: {
+//         status: error.response?.status,
+//         statusText: error.response?.statusText,
+//         details: error.response?.data,
+//         message: error.message,
+//       },
+//     };
+//   } finally {
+//     ssh.dispose();
+//   }
+// }
 
 async function dockerSetup(instance_ip) {
   // use bash via ssh to run docker commands to pull in a docker image and start it
@@ -152,9 +145,8 @@ async function dockerSetup(instance_ip) {
   if (commandOutput.command_status === "fail") {
     console.log("Error pulling docker image");
     return commandOutput;
-  } else {
-    console.log("Success pulling docker image");
   }
+  console.log("Success pulling docker image");
 }
 
 async function awsSetup(instance_ip) {
@@ -164,9 +156,10 @@ async function awsSetup(instance_ip) {
   commandOutput = await runCommandviaSSH(instance_ip, aws_cli_download_command);
   if (commandOutput.command_status === "fail") {
     console.log("Error downloading aws cli");
-  } else {
-    console.log("Success downloading aws cli");
+    return commandOutput;
+    ß;
   }
+  console.log("Success downloading aws cli");
 
   // aws_access_key_command = `export AWS_ACCESS_KEY_ID=${process.env.AWS_ACCESS_KEY_ID}`
   // aws_secret_access_key_command = `export AWS_SECRET_ACCESS_KEY=${process.env.AWS_SECRET_ACCESS_KEY}`
@@ -181,6 +174,7 @@ async function awsSetup(instance_ip) {
   commandOutput = await runCommandviaSSH(instance_ip, concatenatedCommand);
   if (commandOutput.command_status === "fail") {
     console.log("Error creating environment variables");
+    return commandOutput;
   } else {
     console.log("Success creating environment variables");
   }
@@ -198,14 +192,16 @@ async function downloadFileFromS3(instance_ip, localFilePath, bucketFilePath) {
   }
 }
 
-async function lambdaTrainRoutine(instance_ip) {
-  console.log("Running command on Lambda Labs instance...");
+async function lambdaTrainRoutine(instance_ip, projectName, userId) {
+  // const userId = "102532651229287036481";
+  // const projectName = "test_project";
+  // const projectName = "test";
+
+  console.log("Running training loop on Lambda Labs instance...");
+  const ssh = new NodeSSH(); // ANSH
   const username = "ubuntu";
   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
-  const hardCodeId = "102532651229287036481";
-  const hardCodeProject = "test_project";
-  const hardCodeFolder = "test";
-  const hardCodeOutputDir = "ns-process-output";
+  const processedDataOutputDir = projectName + "-output";
 
   try {
     // Connect to instance
@@ -215,13 +211,16 @@ async function lambdaTrainRoutine(instance_ip) {
       privateKey: privateKey,
     });
 
-    testCommand0 = "cd " + hardCodeId + "/" + hardCodeProject;
-    var result = await ssh.execCommand(testCommand0);
+    // cd into correct workspace
+    var commandString = "cd " + userId + "/" + projectName;
+    var result = await ssh.execCommand(commandString);
+    console.log("[Docker setup]", result.stdout);
     if (result.stderr) {
-      throw new Error("cd failed");
+      throw new Error("cd failed", result.stderr);
     }
 
-    testCommand1 =
+    // start docker image with correct options as per nerf studio
+    commandString =
       'sudo docker run \
             --gpus all \
             -u "$(id -u)" \
@@ -235,32 +234,38 @@ async function lambdaTrainRoutine(instance_ip) {
             -e XDG_CACHE_HOME=/workspace/.cache \
             -e MPLCONFIGDIR=/workspace/.config/matplotlib \
             ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
-
-    result = await ssh.execCommand(testCommand1);
+    result = await ssh.execCommand(commandString);
+    console.log("[Docker setup]", result.stdout);
     if (result.stderr) {
-      throw new Error("docker run fail");
+      throw new Error("docker run fail:", result.stderr);
     }
     const containerId = result.stdout;
-    testCommand2 = `sudo docker exec ${containerId} bash -c 'cd /workspace/${hardCodeId}/${hardCodeProject} && ns-process-data images --data "${hardCodeFolder}" --output-dir "${hardCodeOutputDir}"'`;
 
-    result = await ssh.execCommand(testCommand2);
-    console.log("PRINT", result.stdout);
-
+    // pre-processing data
+    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-process-data images --data "${projectName}" --output-dir "${processedDataOutputDir}" --gpu'`;
+    result = await ssh.execCommand(commandString);
+    console.log("[Preprocess]", result.stdout);
     // if anything in std.err, we should fail
     if (result.stderr) {
-      console.log(result.stderr);
-      throw new Error("Docker exec failed");
+      throw new Error("Docker exec failed", result.stderr);
     }
 
-    testCommandTalkTuah = `sudo docker exec ${containerId} bash -c ' cd /workspace/${hardCodeId}/${hardCodeProject} && ns-train nerfacto --data "${hardCodeOutputDir}"'`;
-    result = await ssh.execCommand(testCommandTalkTuah);
-    console.log("PRIN2T", result.stdout);
+    // train on processed data
+    commandString = `sudo docker exec ${containerId} bash -c ' cd /workspace/${userId}/${projectName} && ns-train nerfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True'`;
+    result = await ssh.execCommand(commandString);
+    console.log("[Train]", result.stdout);
     if (result.stderr) {
-        console.log(result.stderr);
-        throw new Error("Docker exec failed");
+      throw new Error("Docker exec failed", result.stderr);
     }
 
     // TODO: kill docker container at end
+    commandString = `sudo docker stop ${containerId}`;
+    result = await ssh.execCommand(commandString);
+    console.log("[Cleanup]", result.stdout);
+    if (result.stderr) {
+      throw new Error("Docker cleanup failed", result.stderr);
+    }
+
     return {
       command_status: "success",
       message: "Command executed successfully",
@@ -282,85 +287,27 @@ async function lambdaTrainRoutine(instance_ip) {
       },
     };
   } finally {
-    ssh.dispose();
+    ssh.dispose(); // ANSH
   }
 }
-
-async function test(instance_ip) {
-  const hardCodeId = "102532651229287036481";
-  const hardCodeProject = "test_project";
-  const hardCodeFolder = "test";
-
-  testCommand0 = "cd " + hardCodeId + "/" + hardCodeProject;
-  cmdOut = await runCommandviaSSH(instance_ip, testCommand0);
-
-  testCommand1 =
-    'sudo docker run \
-    --gpus all \
-    -u "$(id -u)" \
-    -v "$(pwd)":/workspace \
-    -v /home/ubuntu/.cache:/home/user/.cache \
-    -p 7007:7007 \
-    --rm \
-    -d \
-    --shm-size=40gb \
-    -e XDG_DATA_HOME=/workspace/.local/share \
-    -e XDG_CACHE_HOME=/workspace/.cache \
-    -e MPLCONFIGDIR=/workspace/.config/matplotlib \
-    ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
-
-  //   testCommand2 = "sudo docker exec ";
-  //   testCommand3 =
-  //     "ns-process-data images --data test --output-dir ns-process-output";
-  //   commandStrings = [testCommand1, testCommand2, testCommand3];
-  commandOuptut = await runCommandviaSSH(instance_ip, testCommand1);
-  const containerId = commandOuptut.result.stdout;
-
-  //   testCommand2 =
-  //     "sudo docker exec " +
-  //     containerId +
-  //     ' bash -c "cd /workspace/' +
-  //     hardCodeId +
-  //     "/" +
-  //     hardCodeProject +
-  //     '"' +
-  //     " && ns-process-data images --data " +
-  //     hardCodeFolder +
-  //     " --output-dir ns-process-output";
-
-  const testCommand2 = `sudo docker exec ${containerId} bash -c "cd /workspace && ls"`;
-  commandOuptut2 = await runCommandviaSSH(instance_ip, testCommand2);
-
-  //   commandOuptut3 = await runCommandviaSSH(instance_ip, testCommand3);
-
-  // TODO: kill the docker after done running ns-process-data / train commands
-}
-
-router.post("/test", async (req, res) => {
-  try {
-    await lambdaTrainRoutine("129.213.145.88");
-    res.status(200).json({});
-  } catch (error) {}
-});
 
 // route for training a model
 router.post("/train", async (req, res) => {
   const { userId, projectName } = req.body;
   console.log(userId, projectName);
   try {
+    // Look for any running instances of the desired type
     const existingInstancesResponse = await axios.get(
       "https://cloud.lambdalabs.com/api/v1/instances",
       {
         headers: { Authorization: `Bearer ${LAMBDA_LABS_API_KEY}` },
       }
     );
-    // Look for any running instances of the desired type
     const runningInstance = existingInstancesResponse.data.data.find(
       (instance) =>
         instance.instance_type.name === INSTANCE_TYPE &&
         instance.status === "active"
     );
-
     if (!runningInstance) {
       console.log("No existing instance found. Sending error response...");
       throw new Error("No existing instance found");
@@ -368,15 +315,10 @@ router.post("/train", async (req, res) => {
     console.log(`Found existing running instance: ${runningInstance.id}`);
 
     // Download files from s3 onto lambda labs instance using commands
-
     console.log("Downloading files from S3 to Lambda Labs instance...");
-
-    // S3 Bucket and file details
     const bucketName = process.env.S3_BUCKET_NAME; // Add your S3 bucket name here
-
     const localFilePath = `/home/ubuntu/${userId}/${projectName}`; // Destination path on the Lambda Labs instance
     const bucketFilePath = `s3://${bucketName}/${userId}/${projectName}`;
-    // Run the download command on the instance
     const s3DownloadOutput = await downloadFileFromS3(
       runningInstance.ip,
       localFilePath,
@@ -389,18 +331,31 @@ router.post("/train", async (req, res) => {
     }
     console.log("File downloaded successfully to the instance:", localFilePath);
 
-    // TODO: run the docker run command
-    // docker_run_command = "docker run ..."
-    // commandOutput = await runCommandviaSSH(instance_ip, docker_run_command);
-    // // check status
-    // if (commandOutput.command_status === "fail") {
-    //     console.log("Error running docker image");
-    //     return commandOutput;
-    // }
+    // Unzipping the .zip file that we download from s3
+    const unzipCommand = `unzip -o ${localFilePath}/${projectName}.zip -d ${localFilePath}`;
+    const unzipResult = await runCommandviaSSH(
+      runningInstance.ip,
+      unzipCommand
+    );
+    if (unzipResult.command_status === "fail") {
+      throw new Error(`Failed to unzip file: ${unzipResult.error.message}`);
+    }
+    console.log("File unzipped successfully");
 
-    // TODO: run nerf pre-processings steps / nerf commands on the file
-
-    res.status(200).json({ localFilePath });
+    // Run training routine
+    const trainResult = await lambdaTrainRoutine(
+      runningInstance.ip,
+      projectName,
+      userId
+    );
+    if (trainResult.command_status === "fail") {
+      console.log("Error running training loop");
+      throw new Error(
+        `Failed to run training loop: ${trainResult.error.message}`
+      );
+    }
+    console.log("Success running training loop");
+    res.status(200).json({ trainResult });
     return;
   } catch (error) {
     // Detailed error logging
@@ -515,9 +470,16 @@ router.post("/start_instance", async (req, res) => {
     console.log("Instance IP:", instanceIP);
 
     // docker and aws setup
-    await dockerSetup(instanceIP);
+    var result = await dockerSetup(instanceIP);
+    if (result.command_status === "fail") {
+      throw new Error("Error setting up docker", result.error);
+    }
     console.log("Docker setup completed");
-    await awsSetup(instanceIP);
+
+    result = await awsSetup(instanceIP);
+    if (result.command_status === "fail") {
+      throw new Error("Error setting up aws", result.error);
+    }
     console.log("AWS setup completed");
 
     res

@@ -12,8 +12,10 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
 
   const fetchExistingProjects = useCallback(async () => {
     try {
-      const userId = user.sub.split('|')[1];
-      const response = await axios.get(`http://localhost:8000/s3/projects/${userId}`);
+      const userId = user.sub.split("|")[1];
+      const response = await axios.get(
+        `http://localhost:8000/s3/projects/${userId}`
+      );
       setExistingProjects(response.data.projects || []);
     } catch (error) {
       console.error("Error fetching existing projects:", error);
@@ -31,7 +33,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
     const selectedFile = e.target.files[0];
     if (selectedFile && selectedFile.name.endsWith(".zip")) {
       setFile(selectedFile);
-      setUploadMessage(""); // Clear any previous error messages
+      setUploadMessage("");
     } else {
       setFile(null);
       setUploadMessage("Please upload a valid .zip file.");
@@ -46,22 +48,41 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
       return;
     }
 
-    if (existingProjects.includes(projectName)) {
-      setErrorMessage("A project with this name already exists. Please choose a different name.");
+    if (!/^[A-Za-z0-9_]+$/.test(projectName)) {
+      setErrorMessage(
+        "Project name should only contain letters, numbers, and underscores (no spaces)."
+      );
       return;
     }
 
+    // Check for duplicate project name
+    if (existingProjects.includes(projectName)) {
+      setErrorMessage(
+        "A project with this name already exists. Please choose a different name."
+      );
+      return;
+    }
+
+    // Rename the file to match the project name (with .zip extension)
+    const renamedFile = new File([file], `${projectName}.zip`, {
+      type: file.type,
+    });
+
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", renamedFile);
     formData.append("projectName", projectName);
-    formData.append("userId", user.sub.split('|')[1]);
+    formData.append("userId", user.sub.split("|")[1]);
 
     try {
-      const response = await axios.post("http://localhost:8000/s3/upload", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
+      const response = await axios.post(
+        "http://localhost:8000/s3/upload",
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
 
       setUploadMessage(response.data.message || "File uploaded successfully!");
       console.log("File uploaded:", response.data);
@@ -104,7 +125,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
                 setErrorMessage(""); // Clear error message on input change
               }}
               className="w-full border-gray-300 rounded-lg shadow-sm p-2 focus:ring-teal-500 focus:border-teal-500"
-              placeholder="Enter project name"
+              placeholder="Enter project name (use underscores instead of spaces)"
             />
           </div>
           {errorMessage && (
