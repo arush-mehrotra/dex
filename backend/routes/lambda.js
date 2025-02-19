@@ -181,38 +181,51 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     }
     const containerId = result.stdout;
 
-    // pre-processing data
-    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-process-data video --data ${projectName}/${projectName}.mp4 --output-dir ${processedDataOutputDir} --gpu'`;
+    // full command string:
+    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && 
+    ns-process-data video --data ${projectName}/${projectName}.mp4 --output-dir ${processedDataOutputDir} --num-downscales 1  --num-frames-target 100 --gpu &&
+    ns-train nerfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True &&
+    ns-export poisson --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" && 
+    sudo docker stop ${containerId}'`;
+    
     result = await ssh.execCommand(commandString);
-    console.log("[Preprocess]", result.stdout);
-    // if anything in std.err, we should fail
+    console.log("[Training]", result.stdout);
     if (result.stderr) {
-      throw new Error("Docker exec failed", result.stderr);
+      throw new Error("Training loop failed", result.stderr);
     }
+
+    // pre-processing data
+    // commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-process-data video --data ${projectName}/${projectName}.mp4 --output-dir ${processedDataOutputDir} --num-downscales 1  --num-frames-target 100 --gpu'`;
+    // result = await ssh.execCommand(commandString);
+    // console.log("[Preprocess]", result.stdout);
+    // // if anything in std.err, we should fail
+    // if (result.stderr) {
+    //   throw new Error("Docker exec failed", result.stderr);
+    // }
 
     // train on processed data
-    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-train nerfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True'`;
-    result = await ssh.execCommand(commandString);
-    console.log("[Train]", result.stdout);
-    if (result.stderr) {
-      throw new Error("Docker exec failed", result.stderr);
-    }
+    // commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-train nerfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True'`;
+    // result = await ssh.execCommand(commandString);
+    // console.log("[Train]", result.stdout);
+    // if (result.stderr) {
+    //   throw new Error("Docker exec failed", result.stderr);
+    // }
 
     // export the mesh
-    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-export tsdf --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}"'`;
-    result = await ssh.execCommand(commandString);
-    console.log("[Export Mesh]", result.stdout);
-    if (result.stderr) {
-      throw new Error("Docker exec failed", result.stderr);
-    }
+    // commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-export poisson --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}"'`;
+    // result = await ssh.execCommand(commandString);
+    // console.log("[Export Mesh]", result.stdout);
+    // if (result.stderr) {
+    //   throw new Error("Docker exec failed", result.stderr);
+    // }
 
     // TODO: kill docker container at end
-    commandString = `sudo docker stop ${containerId}`;
-    result = await ssh.execCommand(commandString);
-    console.log("[Cleanup]", result.stdout);
-    if (result.stderr) {
-      throw new Error("Docker cleanup failed", result.stderr);
-    }
+    // commandString = `sudo docker stop ${containerId}`;
+    // result = await ssh.execCommand(commandString);
+    // console.log("[Cleanup]", result.stdout);
+    // if (result.stderr) {
+    //   throw new Error("Docker cleanup failed", result.stderr);
+    // }
 
     return {
       command_status: "success",
