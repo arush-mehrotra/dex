@@ -184,7 +184,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     // full command string:
     commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && 
     ns-process-data images --data ${projectName} --output-dir ${processedDataOutputDir} --gpu &&
-    ns-train nerfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True &&
+    ns-train splatfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True &&
     ns-export poisson --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" && 
     sudo docker stop ${containerId}'`;
     
