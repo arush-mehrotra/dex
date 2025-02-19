@@ -83,6 +83,7 @@ async function dockerSetup(instance_ip) {
     return commandOutput;
   }
   console.log("Success pulling docker image");
+  return commandOutput;
 }
 
 async function awsSetup(instance_ip) {
@@ -92,7 +93,6 @@ async function awsSetup(instance_ip) {
   commandOutput = await runCommandviaSSH(instance_ip, aws_cli_download_command);
   if (commandOutput.command_status === "fail") {
     console.log("Error downloading aws cli");
-    return commandOutput;
   }
   console.log("Success downloading aws cli");
 
@@ -108,6 +108,7 @@ async function awsSetup(instance_ip) {
     return commandOutput;
   } else {
     console.log("Success creating environment variables");
+    return commandOutput;
   }
 }
 
@@ -136,7 +137,6 @@ async function uploadFileToS3(instance_ip, localFilePath, bucketFilePath) {
 }
 
 async function lambdaTrainRoutine(instance_ip, projectName, userId) {
-
   console.log("Running training loop on Lambda Labs instance...");
   const ssh = new NodeSSH(); // ANSH
   const username = "ubuntu";
@@ -182,7 +182,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     const containerId = result.stdout;
 
     // pre-processing data
-    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-process-data images --data "${projectName}" --output-dir "${processedDataOutputDir}" --gpu'`;
+    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-process-data video --data ${projectName}/${projectName}.mp4 --output-dir ${processedDataOutputDir} --gpu'`;
     result = await ssh.execCommand(commandString);
     console.log("[Preprocess]", result.stdout);
     // if anything in std.err, we should fail
@@ -191,7 +191,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     }
 
     // train on processed data
-    commandString = `sudo docker exec ${containerId} bash -c ' cd /workspace/${userId}/${projectName} && ns-train nerfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True'`;
+    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-train nerfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True'`;
     result = await ssh.execCommand(commandString);
     console.log("[Train]", result.stdout);
     if (result.stderr) {
@@ -199,7 +199,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     }
 
     // export the mesh
-    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-export poisson --load-config CONFIG.yml --output-dir "${meshOutputDir}"'`;
+    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-export tsdf --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}"'`;
     result = await ssh.execCommand(commandString);
     console.log("[Export Mesh]", result.stdout);
     if (result.stderr) {
@@ -320,11 +320,11 @@ router.post("/train", async (req, res) => {
     }
     console.log("Mesh uploaded successfully to S3");
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: "success",
       message: "Training completed and mesh uploaded",
       trainResult,
-      meshPath: `${userId}/${projectName}/${meshOutputDir}`
+      meshPath: `${userId}/${projectName}/${meshOutputDir}`,
     });
     return;
   } catch (error) {
