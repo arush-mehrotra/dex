@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
+import axios from "axios";
 
 const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   const { user } = useAuth0();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [objFileUrl, setObjFileUrl] = useState(null);
   const [objFileStatus, setObjFileStatus] = useState("loading");
+  const [isTraining, setIsTraining] = useState(false);
 
   const handleDelete = () => {
     if (window.confirm(`Are you sure you want to delete the project "${project}"?`)) {
@@ -52,6 +54,33 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
     if (objFileUrl) {
       const renderingUrl = `/rendering?objFileUrl=${encodeURIComponent(objFileUrl)}`;
       window.open(renderingUrl, "_blank");
+    }
+  };
+
+  const handleTrain = async () => {
+    setIsTraining(true);
+    try {
+      const userId = user.sub.split('|')[1];
+      const response = await axios.post('http://localhost:8000/lambda/train', {
+        userId,
+        projectName: project
+      });
+
+      if (response.data.status === "success") {
+        // Refresh the file status to show the new mesh
+        setObjFileStatus("loading");
+        const files = await fetchProjectFiles(userId, project);
+        const objFile = files.find((file) => file.fileName.endsWith(".obj"));
+        if (objFile) {
+          setObjFileUrl(objFile.url);
+          setObjFileStatus("available");
+        }
+      }
+    } catch (error) {
+      console.error("Error training model:", error);
+      alert("Failed to train model. Please try again later.");
+    } finally {
+      setIsTraining(false);
     }
   };
 
@@ -106,8 +135,14 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
                   {!instanceRunning ? (
                     <p className="mt-4 text-gray-500 text-sm">Start the instance to train your model</p>
                   ) : (
-                    <button className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200">
-                      Train 3D Model
+                    <button 
+                      onClick={handleTrain}
+                      disabled={isTraining}
+                      className={`mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded transition-colors duration-200 ${
+                        isTraining ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'
+                      }`}
+                    >
+                      {isTraining ? 'Training...' : 'Train 3D Model'}
                     </button>
                   )}
                 </>
