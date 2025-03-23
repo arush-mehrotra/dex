@@ -544,4 +544,46 @@ router.post("/stop_instance", async (req, res) => {
   }
 });
 
+// Add a new route for checking instance status
+router.get("/check_instance", async (req, res) => {
+  try {
+    const existingInstancesResponse = await axios.get(
+      "https://cloud.lambdalabs.com/api/v1/instances",
+      {
+        headers: { Authorization: `Bearer ${LAMBDA_LABS_API_KEY}` },
+      }
+    );
+    
+    const runningInstance = existingInstancesResponse.data.data.find(
+      (instance) =>
+        instance.instance_type.name === INSTANCE_TYPE &&
+        instance.status === "active"
+    );
+    
+    if (runningInstance) {
+      res.status(200).json({
+        instance: runningInstance,
+        status: "found"
+      });
+    } else {
+      res.status(200).json({
+        instance: null,
+        status: "not_found"
+      });
+    }
+  } catch (error) {
+    console.error("Error checking instance status:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Failed to check instance status",
+      error: {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        details: error.response?.data,
+        message: error.message,
+      }
+    });
+  }
+});
+
 module.exports = router;

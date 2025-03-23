@@ -11,7 +11,7 @@ const Projects = () => {
   const [projects, setProjects] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [instanceStatus, setInstanceStatus] = useState("stopped");
+  const [instanceStatus, setInstanceStatus] = useState("checking");
   const [instanceLoading, setInstanceLoading] = useState(false);
   const [showPopup, setShowPopup] = useState(false);
 
@@ -29,6 +29,20 @@ const Projects = () => {
       setLoading(false);
     }
   }, [user]);
+
+  const checkInstanceStatus = useCallback(async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/lambda/check_instance');
+      if (response.data.instance && response.data.instance.status === 'active') {
+        setInstanceStatus("running");
+      } else {
+        setInstanceStatus("stopped");
+      }
+    } catch (error) {
+      console.error("Error checking instance status:", error);
+      setInstanceStatus("stopped");
+    }
+  }, []);
 
   const handleDelete = async (projectName) => {
     if (!user || !projectName) {
@@ -89,9 +103,11 @@ const Projects = () => {
     if (!isAuthenticated) {
       loginWithRedirect(); // Redirect to the login page if not authenticated
     } else if (user) {
+      // Check instance status on first load
+      checkInstanceStatus();
       fetchProjects();
     }
-  }, [isLoading, isAuthenticated, user, fetchProjects, loginWithRedirect]);
+  }, [isLoading, isAuthenticated, user, fetchProjects, loginWithRedirect, checkInstanceStatus]);
 
   if (isLoading) {
     return <p className="text-center mt-10">Loading...</p>;
@@ -104,27 +120,31 @@ const Projects = () => {
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-4">
             <h1 className="text-2xl font-bold">Your Projects</h1>
-              <button
-                onClick={togglePopup}
-                className="bg-teal-500 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-teal-600"
-              >
-                <span>Create new project</span>
-                <span className="bg-white text-teal-500 rounded-full h-6 w-6 flex items-center justify-center">
-                  +
-                </span>
-              </button>
+            <button
+              onClick={togglePopup}
+              className="bg-teal-500 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-teal-600"
+            >
+              <span>Create new project</span>
+              <span className="bg-white text-teal-500 rounded-full h-6 w-6 flex items-center justify-center">
+                +
+              </span>
+            </button>
           </div>
           <div className="flex gap-4 items-center">
             <span className={`px-3 py-1 rounded-full text-sm ${
-              instanceStatus === "running" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+              instanceStatus === "checking" 
+                ? "bg-yellow-100 text-yellow-800" 
+                : instanceStatus === "running" 
+                  ? "bg-green-100 text-green-800" 
+                  : "bg-gray-100 text-gray-800"
             }`}>
-              Instance: {instanceStatus}
+              Instance: {instanceStatus === "checking" ? "Checking..." : instanceStatus}
             </span>
             <button
               onClick={instanceStatus === "stopped" ? handleStartInstance : handleStopInstance}
-              disabled={instanceLoading}
+              disabled={instanceLoading || instanceStatus === "checking"}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors duration-200 ${
-                instanceLoading 
+                instanceLoading || instanceStatus === "checking"
                   ? "bg-gray-300 cursor-not-allowed" 
                   : instanceStatus === "stopped"
                     ? "bg-green-600 hover:bg-green-700 text-white"
@@ -134,9 +154,11 @@ const Projects = () => {
               <Power className="w-4 h-4" />
               {instanceLoading 
                 ? "Processing..." 
-                : instanceStatus === "stopped" 
-                  ? "Start Instance" 
-                  : "Stop Instance"}
+                : instanceStatus === "checking"
+                  ? "Checking..."
+                  : instanceStatus === "stopped" 
+                    ? "Start Instance" 
+                    : "Stop Instance"}
             </button>
           </div>
         </div>
