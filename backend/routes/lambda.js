@@ -141,7 +141,7 @@ async function uploadFileToS3(instance_ip, localFilePath, bucketFilePath) {
 
 async function lambdaTrainRoutine(instance_ip, projectName, userId) {
   console.log("Running training loop on Lambda Labs instance...");
-  const ssh = new NodeSSH(); // ANSH
+  const ssh = new NodeSSH(); 
   const username = "ubuntu";
   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
   const processedDataOutputDir = projectName + "-output";
@@ -184,53 +184,29 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     }
     const containerId = result.stdout;
 
-    // full command string:
+    // Execute the training commands without trying to stop the container from within
     commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && 
     ns-process-data video --data ./*.MP4 --output-dir ${processedDataOutputDir} --num-downscales=0 --gpu &&
     export USER=myuser &&
     export LOGNAME=myuser &&
     ns-train splatfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.cull_alpha_thresh=0.005 --pipeline.model.use_scale_regularization=True &&
-    ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" --obb_center 0.0000000000 0.0000000000 0.0000000000 --obb_rotation 0.0000000000 0.0000000000 0.0000000000 --obb_scale 1.0000000000 1.0000000000 1.0000000000 && 
-    sudo docker stop ${containerId}'`;
+    ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" --obb_center 0.0000000000 0.0000000000 0.0000000000 --obb_rotation 0.0000000000 0.0000000000 0.0000000000 --obb_scale 1.0000000000 1.0000000000 1.0000000000'`;
 
     result = await ssh.execCommand(commandString);
     console.log("[Training]", result.stdout);
-    if (result.stderr) {
+    if (result.stderr && result.stderr.includes("Error")) {
       throw new Error("Training loop failed", result.stderr);
     }
 
-    // pre-processing data
-    // commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-process-data video --data ${projectName}/${projectName}.mp4 --output-dir ${processedDataOutputDir} --num-downscales 1  --num-frames-target 100 --gpu'`;
-    // result = await ssh.execCommand(commandString);
-    // console.log("[Preprocess]", result.stdout);
-    // // if anything in std.err, we should fail
-    // if (result.stderr) {
-    //   throw new Error("Docker exec failed", result.stderr);
-    // }
-
-    // train on processed data
-    // commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-train nerfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True'`;
-    // result = await ssh.execCommand(commandString);
-    // console.log("[Train]", result.stdout);
-    // if (result.stderr) {
-    //   throw new Error("Docker exec failed", result.stderr);
-    // }
-
-    // export the mesh
-    // commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && ns-export poisson --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}"'`;
-    // result = await ssh.execCommand(commandString);
-    // console.log("[Export Mesh]", result.stdout);
-    // if (result.stderr) {
-    //   throw new Error("Docker exec failed", result.stderr);
-    // }
-
-    // TODO: kill docker container at end
-    // commandString = `sudo docker stop ${containerId}`;
-    // result = await ssh.execCommand(commandString);
-    // console.log("[Cleanup]", result.stdout);
-    // if (result.stderr) {
-    //   throw new Error("Docker cleanup failed", result.stderr);
-    // }
+    // Stop the Docker container from outside
+    console.log("Stopping Docker container:", containerId);
+    const stopCommand = `sudo docker stop ${containerId}`;
+    const stopResult = await ssh.execCommand(stopCommand);
+    console.log("[Container Stop]", stopResult.stdout);
+    if (stopResult.stderr) {
+      console.error("Warning: Issue stopping container:", stopResult.stderr);
+      // Continue execution even if container stop had issues
+    }
 
     return {
       command_status: "success",
@@ -253,7 +229,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
       },
     };
   } finally {
-    ssh.dispose(); // ANSH
+    ssh.dispose();
   }
 }
 
