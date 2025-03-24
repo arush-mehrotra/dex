@@ -1,24 +1,29 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAuth0, withAuthenticationRequired } from "@auth0/auth0-react";
 import axios from "axios";
 import Navbar from "../components/Navbar";
 import ProjectCard from "../components/ProjectCard";
-import { Power, Plus } from "lucide-react";
+import { Power } from "lucide-react";
 import CreateProjectPopup from "../components/CreateProjectPopup";
 
 const Projects = () => {
-  const { user, isAuthenticated, isLoading, loginWithRedirect } = useAuth0();
+  const { user, isLoading } = useAuth0();
   const [projects, setProjects] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [instanceStatus, setInstanceStatus] = useState("checking");
-  const [instanceLoading, setInstanceLoading] = useState(false);
   const [showPopup, setShowPopup] = useState(false);
 
   const fetchProjects = useCallback(async () => {
+    if (!user) {
+      console.error("User not available");
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     try {
-      const userId = user.sub.split('|')[1];
+      const userId = user.sub.split("|")[1];
       const response = await axios.get(`http://localhost:8000/s3/projects/${userId}`);
       setProjects(response.data.projects || []);
       setError("");
@@ -32,9 +37,25 @@ const Projects = () => {
 
   const checkInstanceStatus = useCallback(async () => {
     try {
-      const response = await axios.get('http://localhost:8000/lambda/check_instance');
-      if (response.data.instance && response.data.instance.status === 'active') {
+      const response = await axios.get("http://localhost:8000/lambda/check_instance");
+      if (response.data.instance && response.data.instance.status === "active") {
         setInstanceStatus("running");
+      } else if (response.data.instance && response.data.instance.status === "booting") {
+        setInstanceStatus("loading");
+        // Poll for status changes while booting
+        const intervalId = setInterval(async () => {
+          try {
+            const checkResponse = await axios.get("http://localhost:8000/lambda/check_instance");
+            if (checkResponse.data.instance && checkResponse.data.instance.status === "active") {
+              setInstanceStatus("running");
+              clearInterval(intervalId);
+            }
+          } catch (error) {
+            console.error("Error polling instance status:", error);
+          }
+        }, 5000); // Check every 5 seconds
+        // Clear interval after 5 minutes (prevent infinite polling)
+        setTimeout(() => clearInterval(intervalId), 300000);
       } else {
         setInstanceStatus("stopped");
       }
@@ -51,7 +72,7 @@ const Projects = () => {
     }
 
     try {
-      const userId = user.sub.split('|')[1];
+      const userId = user.sub.split("|")[1];
       await axios.delete(`http://localhost:8000/s3/projects/${userId}/${projectName}`);
       setProjects(projects.filter((project) => project !== projectName));
     } catch (error) {
@@ -61,30 +82,46 @@ const Projects = () => {
   };
 
   const handleStartInstance = async () => {
-    setInstanceLoading(true);
+    setInstanceStatus("loading");
     try {
-      const response = await axios.post('http://localhost:8000/lambda/start_instance');
-      if (response.data.instance_status === 'launched' || response.data.instance_status === 'existing') {
-        setInstanceStatus("running");
+      const response = await axios.post("http://localhost:8000/lambda/start_instance");
+      if (
+        response.data.instance_status === "launched" ||
+        response.data.instance_status === "existing"
+      ) {
+        const intervalId = setInterval(async () => {
+          try {
+            const checkResponse = await axios.get("http://localhost:8000/lambda/check_instance");
+            if (checkResponse.data.instance && checkResponse.data.instance.status === "active") {
+              setInstanceStatus("running");
+              clearInterval(intervalId);
+            }
+          } catch (error) {
+            console.error("Error polling instance status:", error);
+          }
+        }, 5000); // Check every 5 seconds
+        // Clear interval after 5 minutes maximum (prevent infinite polling)
+        setTimeout(() => {
+          clearInterval(intervalId);
+          checkInstanceStatus();
+        }, 300000);
       }
     } catch (error) {
       console.error("Error starting instance:", error);
       setError("Failed to start instance. Please try again later.");
-    } finally {
-      setInstanceLoading(false);
+      setInstanceStatus("stopped");
     }
   };
 
   const handleStopInstance = async () => {
-    setInstanceLoading(true);
+    setInstanceStatus("loading");
     try {
-      await axios.post('http://localhost:8000/lambda/stop_instance');
+      await axios.post("http://localhost:8000/lambda/stop_instance");
       setInstanceStatus("stopped");
     } catch (error) {
       console.error("Error stopping instance:", error);
       setError("Failed to stop instance. Please try again later.");
-    } finally {
-      setInstanceLoading(false);
+      setInstanceStatus("running");
     }
   };
 
@@ -98,16 +135,17 @@ const Projects = () => {
   };
 
   useEffect(() => {
-    if (isLoading) return;
-
-    if (!isAuthenticated) {
-      loginWithRedirect(); // Redirect to the login page if not authenticated
-    } else if (user) {
-      // Check instance status on first load
+    if (user && user.sub) {
       checkInstanceStatus();
       fetchProjects();
+      const statusCheckInterval = setInterval(() => {
+        if (instanceStatus === "loading") {
+          checkInstanceStatus();
+        }
+      }, 30000);
+      return () => clearInterval(statusCheckInterval);
     }
-  }, [isLoading, isAuthenticated, user, fetchProjects, loginWithRedirect, checkInstanceStatus]);
+  }, [user, instanceStatus, fetchProjects, checkInstanceStatus]);
 
   if (isLoading) {
     return <p className="text-center mt-10">Loading...</p>;
@@ -131,34 +169,45 @@ const Projects = () => {
             </button>
           </div>
           <div className="flex gap-4 items-center">
-            <span className={`px-3 py-1 rounded-full text-sm ${
-              instanceStatus === "checking" 
-                ? "bg-yellow-100 text-yellow-800" 
-                : instanceStatus === "running" 
-                  ? "bg-green-100 text-green-800" 
+            <span
+              className={`px-3 py-1 rounded-full text-sm ${
+                instanceStatus === "checking"
+                  ? "bg-yellow-100 text-yellow-800"
+                  : instanceStatus === "running"
+                  ? "bg-green-100 text-green-800"
+                  : instanceStatus === "loading"
+                  ? "bg-blue-100 text-blue-800"
                   : "bg-gray-100 text-gray-800"
-            }`}>
-              Instance: {instanceStatus === "checking" ? "Checking..." : instanceStatus}
+              }`}
+            >
+              Instance:{" "}
+              {instanceStatus === "checking"
+                ? "Checking..."
+                : instanceStatus === "loading"
+                ? "Loading..."
+                : instanceStatus}
             </span>
             <button
-              onClick={instanceStatus === "stopped" ? handleStartInstance : handleStopInstance}
-              disabled={instanceLoading || instanceStatus === "checking"}
+              onClick={
+                instanceStatus === "stopped" ? handleStartInstance : handleStopInstance
+              }
+              disabled={instanceStatus === "checking" || instanceStatus === "loading"}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors duration-200 ${
-                instanceLoading || instanceStatus === "checking"
-                  ? "bg-gray-300 cursor-not-allowed" 
+                instanceStatus === "checking" || instanceStatus === "loading"
+                  ? "bg-gray-300 cursor-not-allowed"
                   : instanceStatus === "stopped"
-                    ? "bg-green-600 hover:bg-green-700 text-white"
-                    : "bg-red-600 hover:bg-red-700 text-white"
+                  ? "bg-green-600 hover:bg-green-700 text-white"
+                  : "bg-red-600 hover:bg-red-700 text-white"
               }`}
             >
               <Power className="w-4 h-4" />
-              {instanceLoading 
-                ? "Processing..." 
-                : instanceStatus === "checking"
-                  ? "Checking..."
-                  : instanceStatus === "stopped" 
-                    ? "Start Instance" 
-                    : "Stop Instance"}
+              {instanceStatus === "checking"
+                ? "Checking..."
+                : instanceStatus === "loading"
+                ? "Processing..."
+                : instanceStatus === "stopped"
+                ? "Start Instance"
+                : "Stop Instance"}
             </button>
           </div>
         </div>
@@ -192,4 +241,6 @@ const Projects = () => {
   );
 };
 
-export default Projects;
+export default withAuthenticationRequired(Projects, {
+  onRedirecting: () => <p className="text-center mt-10">Loading authentication...</p>,
+});

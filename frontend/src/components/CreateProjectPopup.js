@@ -12,7 +12,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
 
   const fetchExistingProjects = useCallback(async () => {
     try {
-      const userId = user.sub.split("|")[1];
+      const userId = user?.sub?.split("|")[1];
       const response = await axios.get(
         `http://localhost:8000/s3/projects/${userId}`
       );
@@ -21,7 +21,7 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
       console.error("Error fetching existing projects:", error);
       setExistingProjects([]);
     }
-  }, [user.sub]);
+  }, [user?.sub]);
 
   useEffect(() => {
     if (isOpen) {

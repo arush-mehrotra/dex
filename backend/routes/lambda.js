@@ -559,11 +559,22 @@ router.get("/check_instance", async (req, res) => {
         instance.instance_type.name === INSTANCE_TYPE &&
         instance.status === "active"
     );
+
+    const bootingInstance = existingInstancesResponse.data.data.find(
+      (instance) =>
+        instance.instance_type.name === INSTANCE_TYPE &&
+        instance.status === "booting"
+    );
     
     if (runningInstance) {
       res.status(200).json({
         instance: runningInstance,
-        status: "found"
+        status: "running"
+      });
+    } else if (bootingInstance) {
+      res.status(200).json({
+        instance: bootingInstance,
+        status: "booting"
       });
     } else {
       res.status(200).json({
