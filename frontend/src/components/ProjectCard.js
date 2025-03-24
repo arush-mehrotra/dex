@@ -67,13 +67,21 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
       });
 
       if (response.data.status === "success") {
-        // Refresh the file status to show the new splat file
-        setObjFileStatus("loading");
-        const files = await fetchProjectFiles(userId, project);
-        const splatFile = files.find((file) => file.fileName.endsWith(".splat"));
-        if (splatFile) {
-          setObjFileUrl(splatFile.url);
+        // If the API returns a direct splatPath, use it instead of searching files
+        if (response.data.splatPath) {
+          const bucketName = process.env.REACT_APP_S3_BUCKET_NAME || 'dex-model-storage';
+          const splatFileUrl = `https://${bucketName}.s3.amazonaws.com/${response.data.splatPath}`;
+          setObjFileUrl(splatFileUrl);
           setObjFileStatus("available");
+        } else {
+          // Fallback to searching for splat files
+          setObjFileStatus("loading");
+          const files = await fetchProjectFiles(userId, project);
+          const splatFile = files.find((file) => file.fileName.endsWith(".splat"));
+          if (splatFile) {
+            setObjFileUrl(splatFile.url);
+            setObjFileStatus("available");
+          }
         }
       }
     } catch (error) {

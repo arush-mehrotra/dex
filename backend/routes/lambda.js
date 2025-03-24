@@ -183,9 +183,9 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
 
     // full command string:
     commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && 
-    ns-process-data images --data ${projectName} --output-dir ${processedDataOutputDir} --gpu &&
-    ns-train splatfacto --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.predict-normals True &&
-    ns-export poisson --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" && 
+    ns-process-data video --data ${projectName}/*.MP4 --output-dir ${processedDataOutputDir} --num-downscales=0 --gpu &&
+    ns-train splatfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.cull_alpha_thresh=0.005 --pipeline.model.use_scale_regularization=True &&
+    ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" && 
     sudo docker stop ${containerId}'`;
     
     result = await ssh.execCommand(commandString);
@@ -249,6 +249,146 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     };
   } finally {
     ssh.dispose(); // ANSH
+  }
+}
+
+async function convertPlyToSplat(instance_ip, userId, projectName) {
+  console.log("Converting PLY to SPLAT format...");
+  const ssh = new NodeSSH();
+  const username = "ubuntu";
+  const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
+  const meshOutputDir = projectName + "-mesh";
+  const plyFilePath = `/home/ubuntu/${userId}/${projectName}/${meshOutputDir}/splat.ply`;
+  
+  try {
+    // Connect to instance
+    await ssh.connect({
+      host: instance_ip,
+      username: username,
+      privateKey: privateKey,
+    });
+
+    // Create a Python script for PLY to SPLAT conversion
+    const pythonScript = `
+import os
+from plyfile import PlyData
+import numpy as np
+from io import BytesIO
+
+def process_ply_to_splat(ply_file_path):
+    plydata = PlyData.read(ply_file_path)
+    vert = plydata["vertex"]
+    sorted_indices = np.argsort(
+        -np.exp(vert["scale_0"] + vert["scale_1"] + vert["scale_2"])
+        / (1 + np.exp(-vert["opacity"]))
+    )
+    buffer = BytesIO()
+    for idx in sorted_indices:
+        v = plydata["vertex"][idx]
+        position = np.array([v["x"], v["y"], v["z"]], dtype=np.float32)
+        scales = np.exp(
+            np.array(
+                [v["scale_0"], v["scale_1"], v["scale_2"]],
+                dtype=np.float32,
+            )
+        )
+        rot = np.array(
+            [v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]],
+            dtype=np.float32,
+        )
+        SH_C0 = 0.28209479177387814
+        color = np.array(
+            [
+                0.5 + SH_C0 * v["f_dc_0"],
+                0.5 + SH_C0 * v["f_dc_1"],
+                0.5 + SH_C0 * v["f_dc_2"],
+                1 / (1 + np.exp(-v["opacity"])),
+            ]
+        )
+        buffer.write(position.tobytes())
+        buffer.write(scales.tobytes())
+        buffer.write((color * 255).clip(0, 255).astype(np.uint8).tobytes())
+        buffer.write(
+            ((rot / np.linalg.norm(rot)) * 128 + 128)
+            .clip(0, 255)
+            .astype(np.uint8)
+            .tobytes()
+        )
+
+    return buffer.getvalue()
+
+def save_splat_file(splat_data, output_path):
+    with open(output_path, "wb") as f:
+        f.write(splat_data)
+
+# Input and output file paths
+ply_file_path = "${plyFilePath}"
+output_file_path = "${plyFilePath.replace('.ply', '.splat')}"
+
+# Convert PLY to SPLAT
+print(f"Processing {ply_file_path}...")
+splat_data = process_ply_to_splat(ply_file_path)
+save_splat_file(splat_data, output_file_path)
+print(f"Saved {output_file_path}")
+`;
+
+    // Save the Python script to a temporary file on the instance
+    const scriptPath = `/home/ubuntu/${userId}/${projectName}/convert_ply_to_splat.py`;
+    await ssh.execCommand(`echo '${pythonScript}' > ${scriptPath}`);
+    
+    // Install required Python packages
+    console.log("Installing required Python packages...");
+    const installPackagesCmd = "pip install plyfile numpy";
+    const installResult = await ssh.execCommand(installPackagesCmd);
+    if (installResult.stderr) {
+      console.error("Error installing Python packages:", installResult.stderr);
+    }
+    
+    // Run the conversion script
+    console.log("Running PLY to SPLAT conversion...");
+    const convertCmd = `python ${scriptPath}`;
+    const convertResult = await ssh.execCommand(convertCmd);
+    
+    if (convertResult.stderr) {
+      console.error("Error during PLY to SPLAT conversion:", convertResult.stderr);
+      throw new Error(`PLY to SPLAT conversion failed: ${convertResult.stderr}`);
+    }
+    
+    console.log("Conversion output:", convertResult.stdout);
+    
+    // Upload the SPLAT file to S3
+    const splatFilePath = plyFilePath.replace('.ply', '.splat');
+    const bucketName = process.env.S3_BUCKET_NAME;
+    const s3SplatPath = `s3://${bucketName}/${userId}/${projectName}/point_cloud.splat`;
+    
+    console.log(`Uploading SPLAT file to S3: ${s3SplatPath}`);
+    const uploadCmd = `aws s3 cp ${splatFilePath} ${s3SplatPath}`;
+    const uploadResult = await ssh.execCommand(uploadCmd);
+    
+    if (uploadResult.stderr) {
+      console.error("Error uploading SPLAT file to S3:", uploadResult.stderr);
+      throw new Error(`Failed to upload SPLAT file to S3: ${uploadResult.stderr}`);
+    }
+    
+    console.log("SPLAT file uploaded successfully to S3");
+    
+    return {
+      command_status: "success",
+      message: "PLY to SPLAT conversion and upload completed successfully",
+      splatPath: `${userId}/${projectName}/${meshOutputDir}/point_cloud.splat`,
+    };
+    
+  } catch (error) {
+    console.error("Error in PLY to SPLAT conversion:", error);
+    return {
+      command_status: "fail",
+      message: "Error in PLY to SPLAT conversion",
+      error: {
+        message: error.message,
+      },
+    };
+  } finally {
+    ssh.dispose();
   }
 }
 
@@ -333,11 +473,25 @@ router.post("/train", async (req, res) => {
     }
     console.log("Mesh uploaded successfully to S3");
 
+    // Convert .ply to .splat and upload to S3
+    const plyToSplatResult = await convertPlyToSplat(
+      runningInstance.ip,
+      userId,
+      projectName
+    );
+    if (plyToSplatResult.command_status === "fail") {
+      throw new Error(
+        `Failed to convert PLY to SPLAT: ${plyToSplatResult.error.message}`
+      );
+    }
+    console.log("PLY converted to SPLAT and uploaded to S3");
+
     res.status(200).json({
       status: "success",
-      message: "Training completed and mesh uploaded",
+      message: "Training completed, mesh and splat files uploaded",
       trainResult,
       meshPath: `${userId}/${projectName}/${meshOutputDir}`,
+      splatPath: plyToSplatResult.splatPath,
     });
     return;
   } catch (error) {
