@@ -42,20 +42,6 @@ const Projects = () => {
         setInstanceStatus("running");
       } else if (response.data.instance && response.data.instance.status === "booting") {
         setInstanceStatus("loading");
-        // Poll for status changes while booting
-        const intervalId = setInterval(async () => {
-          try {
-            const checkResponse = await axios.get("http://localhost:8000/lambda/check_instance");
-            if (checkResponse.data.instance && checkResponse.data.instance.status === "active") {
-              setInstanceStatus("running");
-              clearInterval(intervalId);
-            }
-          } catch (error) {
-            console.error("Error polling instance status:", error);
-          }
-        }, 30000); // Check every 30 seconds
-        // Clear interval after 5 minutes (prevent infinite polling)
-        setTimeout(() => clearInterval(intervalId), 300000);
       } else {
         setInstanceStatus("stopped");
       }
