@@ -183,7 +183,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
 
     // full command string:
     commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && 
-    ns-process-data video --data ${projectName}/*.MP4 --output-dir ${processedDataOutputDir} --num-downscales=0 --gpu &&
+    ns-process-data video --data ./*.MP4 --output-dir ${processedDataOutputDir} --num-downscales=0 --gpu &&
     ns-train splatfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.cull_alpha_thresh=0.005 --pipeline.model.use_scale_regularization=True &&
     ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" && 
     sudo docker stop ${containerId}'`;

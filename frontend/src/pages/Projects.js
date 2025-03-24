@@ -53,7 +53,7 @@ const Projects = () => {
           } catch (error) {
             console.error("Error polling instance status:", error);
           }
-        }, 5000); // Check every 5 seconds
+        }, 30000); // Check every 30 seconds
         // Clear interval after 5 minutes (prevent infinite polling)
         setTimeout(() => clearInterval(intervalId), 300000);
       } else {
@@ -99,7 +99,7 @@ const Projects = () => {
           } catch (error) {
             console.error("Error polling instance status:", error);
           }
-        }, 5000); // Check every 5 seconds
+        }, 30000); // Check every 5 seconds
         // Clear interval after 5 minutes maximum (prevent infinite polling)
         setTimeout(() => {
           clearInterval(intervalId);
