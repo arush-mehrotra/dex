@@ -5,8 +5,8 @@ import axios from "axios";
 const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   const { user } = useAuth0();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [objFileUrl, setObjFileUrl] = useState(null);
-  const [objFileStatus, setObjFileStatus] = useState("loading");
+  const [splatFileUrl, setObjFileUrl] = useState(null);
+  const [splatFileStatus, setObjFileStatus] = useState("loading");
   const [isTraining, setIsTraining] = useState(false);
 
   const handleDelete = () => {
@@ -35,9 +35,9 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
       setObjFileStatus("loading");
       fetchProjectFiles( user.sub.split('|')[1], project)
         .then((fileList) => {
-          const objFile = fileList.find((file) => file.fileName.endsWith(".obj"));
-          if (objFile) {
-            setObjFileUrl(objFile.url);
+          const splatFile = fileList.find((file) => file.fileName.endsWith(".splat"));
+          if (splatFile) {
+            setObjFileUrl(splatFile.url);
             setObjFileStatus("available");
           } else {
             setObjFileStatus("unavailable");
@@ -51,8 +51,8 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   }, [isModalOpen, user, project]);
 
   const handleViewRendering = () => {
-    if (objFileUrl) {
-      const renderingUrl = `/rendering?objFileUrl=${encodeURIComponent(objFileUrl)}`;
+    if (splatFileUrl) {
+      const renderingUrl = `https://antimatter15.com/splat/?url=${encodeURIComponent(splatFileUrl)}`;
       window.open(renderingUrl, "_blank");
     }
   };
@@ -67,12 +67,12 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
       });
 
       if (response.data.status === "success") {
-        // Refresh the file status to show the new mesh
+        // Refresh the file status to show the new splat file
         setObjFileStatus("loading");
         const files = await fetchProjectFiles(userId, project);
-        const objFile = files.find((file) => file.fileName.endsWith(".obj"));
-        if (objFile) {
-          setObjFileUrl(objFile.url);
+        const splatFile = files.find((file) => file.fileName.endsWith(".splat"));
+        if (splatFile) {
+          setObjFileUrl(splatFile.url);
           setObjFileStatus("available");
         }
       }
@@ -119,10 +119,10 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
             <div className="mt-4 text-gray-700">
               <p><strong>Created On:</strong> {project.createdOn || "Unknown date"}</p>
 
-              {objFileStatus === "loading" && (
+              {splatFileStatus === "loading" && (
                 <p className="text-gray-500 mt-2">Loading...</p>
               )}
-              {objFileStatus === "available" && (
+              {splatFileStatus === "available" && (
                 <button
                   onClick={handleViewRendering}
                   className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200"
@@ -130,7 +130,7 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
                   View 3D Rendering
                 </button>
               )}
-              {objFileStatus === "unavailable" && (
+              {splatFileStatus === "unavailable" && (
                 <>
                   {!instanceRunning ? (
                     <p className="mt-4 text-gray-500 text-sm">Start the instance to train your model</p>
