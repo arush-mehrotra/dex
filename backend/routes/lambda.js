@@ -77,12 +77,14 @@ async function dockerSetup(instance_ip) {
 
   // run the docker pull command
   commandOutput = await runCommandviaSSH(instance_ip, docker_pull_command);
+
   // check status
   if (commandOutput.command_status === "fail") {
     console.log("Error pulling docker image");
-    return commandOutput;
+  } else {
+    console.log("Success pulling docker image");
   }
-  console.log("Success pulling docker image");
+
   return commandOutput;
 }
 
@@ -103,13 +105,14 @@ async function awsSetup(instance_ip) {
   const concatenatedCommand = `${aws_dir_command}; ${write_config_command}; ${write_credentials_command}`;
 
   commandOutput = await runCommandviaSSH(instance_ip, concatenatedCommand);
+  
   if (commandOutput.command_status === "fail") {
     console.log("Error creating environment variables");
-    return commandOutput;
   } else {
     console.log("Success creating environment variables");
-    return commandOutput;
   }
+
+  return commandOutput;
 }
 
 async function downloadFileFromS3(instance_ip, localFilePath, bucketFilePath) {
@@ -187,7 +190,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId) {
     ns-train splatfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.cull_alpha_thresh=0.005 --pipeline.model.use_scale_regularization=True &&
     ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" && 
     sudo docker stop ${containerId}'`;
-    
+
     result = await ssh.execCommand(commandString);
     console.log("[Training]", result.stdout);
     if (result.stderr) {
@@ -518,32 +521,12 @@ router.post("/train", async (req, res) => {
 // routes for starting Lambda Labs instance
 router.post("/start_instance", async (req, res) => {
   console.log("Starting Lambda Labs instance...");
-  const region = "us-east-1";
+
+  // Predefined priority list of instance types
+  const preferredInstanceTypes = [INSTANCE_TYPE];
 
   try {
-    // CODE TO CHECK INSTANCE AVAILABILITY - might not need
-    // // Get instance types and their availability
-    // const availabilityResponse = await axios.get('https://cloud.lambdalabs.com/api/v1/instance-types', {
-    //     headers: { 'Authorization': `Bearer ${LAMBDA_LABS_API_KEY}` }
-    // });
-
-    // Find the first region with available capacity
-    // const availableRegions = availabilityResponse.data.data[instanceType]?.regions_with_capacity_available || [];
-    // console.log('Regions with capacity:', availableRegions);
-
-    // const selectedRegion = preferredRegions.find(region => availableRegions.includes(region));
-
-    // if (!selectedRegion) {
-    //     const availabilityMessage = `No capacity available for ${instanceType} in any preferred region. Available regions: ${availableRegions.join(', ')}`;
-    //     console.log(availabilityMessage);
-    //     return res.status(503).json({
-    //         message: 'No capacity available',
-    //         availableRegions,
-    //         suggestion: 'Try again later or choose a different instance type'
-    //     });
-    // }
-    // console.log(`Launching instance in region: ${selectedRegion}`);
-
+    // STEP 1: Check if there's already a running instance
     const existingInstancesResponse = await axios.get(
       "https://cloud.lambdalabs.com/api/v1/instances",
       {
@@ -551,10 +534,9 @@ router.post("/start_instance", async (req, res) => {
       }
     );
 
-    // Look for any running instances of the desired type
     const runningInstance = existingInstancesResponse.data.data.find(
       (instance) =>
-        instance.instance_type.name === INSTANCE_TYPE &&
+        preferredInstanceTypes.includes(instance.instance_type.name) &&
         instance.status === "active"
     );
 
@@ -568,15 +550,46 @@ router.post("/start_instance", async (req, res) => {
       });
     }
 
-    // If no running instance found, proceed with new instance launch
-    console.log(
-      "No existing instance found. Checking for launch availability..."
+    // STEP 2: Get available instance types & region info
+    const instanceTypesResponse = await axios.get(
+      "https://cloud.lambdalabs.com/api/v1/instance-types",
+      {
+        headers: { Authorization: `Bearer ${LAMBDA_LABS_API_KEY}` },
+      }
     );
+
+    const availableData = instanceTypesResponse.data.data;
+
+    let selectedType = null;
+    let selectedRegion = null;
+
+    // STEP 3: Loop through preferred types and check for capacity
+    for (const type of preferredInstanceTypes) {
+      const instanceInfo = availableData[type];
+      if (
+        instanceInfo &&
+        instanceInfo.regions_with_capacity_available.length > 0
+      ) {
+        selectedType = type;
+        selectedRegion = instanceInfo.regions_with_capacity_available[0].name; // Pick first region with capacity
+        console.log(
+          `Selected instance type: ${selectedType} in ${selectedRegion}`
+        );
+        break;
+      }
+    }
+
+    if (!selectedType || !selectedRegion) {
+      throw new Error("No capacity available for preferred instance types.");
+    }
+
+    // STEP 4: Launch instance
+    console.log(`Launching ${selectedType} in ${selectedRegion}...`);
     const launchResponse = await axios.post(
       "https://cloud.lambdalabs.com/api/v1/instance-operations/launch",
       {
-        region_name: region,
-        instance_type_name: INSTANCE_TYPE,
+        region_name: selectedRegion,
+        instance_type_name: selectedType,
         ssh_key_names: [LAMBDA_LABS_SSH_KEY],
         quantity: 1,
         name: "test",
@@ -590,23 +603,24 @@ router.post("/start_instance", async (req, res) => {
     );
 
     const instanceId = launchResponse.data.data.instance_ids[0];
-    console.log("Instance launching, ID:", instanceId);
+    console.log(`Instance launching, ID: ${instanceId}`);
 
-    // Wait for instance to be active and retrieve its IP
+    // STEP 5: Poll until instance is active
     let instanceDetails;
     do {
-      await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30 seconds before checking
+      await new Promise((resolve) => setTimeout(resolve, 30000)); // 30 sec wait
       instanceDetails = await axios.get(
         `https://cloud.lambdalabs.com/api/v1/instances/${instanceId}`,
         {
           headers: { Authorization: `Bearer ${LAMBDA_LABS_API_KEY}` },
         }
       );
-    } while (!(instanceDetails.data.data.status === "active"));
-    const instanceIP = instanceDetails.data.data.ip;
-    console.log("Instance IP:", instanceIP);
+    } while (instanceDetails.data.data.status !== "active");
 
-    // docker and aws setup
+    const instanceIP = instanceDetails.data.data.ip;
+    console.log(`Instance active, IP: ${instanceIP}`);
+
+    // STEP 6: Docker + AWS setup
     var result = await dockerSetup(instanceIP);
     if (result.command_status === "fail") {
       throw new Error("Error setting up docker", result.error);
@@ -619,12 +633,14 @@ router.post("/start_instance", async (req, res) => {
     }
     console.log("AWS setup completed");
 
-    res
-      .status(200)
-      .json({ instanceId, instanceIP, instance_status: "launched" });
-    return { instanceId, instanceIP };
+    res.status(200).json({
+      instanceId,
+      instanceIP,
+      instanceType: selectedType,
+      region: selectedRegion,
+      instance_status: "launched",
+    });
   } catch (error) {
-    // Detailed error logging
     console.error("Full error response:", {
       status: error.response?.status,
       statusText: error.response?.statusText,
