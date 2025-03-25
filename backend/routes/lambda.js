@@ -13,8 +13,21 @@ const router = express.Router();
 
 const SSH_KEY_PATH = process.env.SSH_KEY_PATH;
 const LAMBDA_LABS_API_KEY = process.env.LAMBDA_LABS_API_KEY;
-const INSTANCE_TYPE = process.env.LAMBDA_LABS_INSTANCE_TYPE;
+const INSTANCE_TYPE = JSON.parse(process.env.LAMBDA_LABS_INSTANCE_TYPE || '[]');
 const LAMBDA_LABS_SSH_KEY = process.env.LAMBDA_LABS_SSH_KEY;
+
+// List of allowed US regions
+const ALLOWED_REGIONS = [
+  'us-east-1',    // Virginia, USA
+  'us-east-2',    // Washington DC, USA
+  'us-midwest-1', // Illinois, USA
+  'us-south-1',   // Texas, USA
+  'us-south-2',   // North Texas, USA
+  'us-south-3',   // Central Texas, USA
+  'us-west-1',    // California, USA
+  'us-west-2',    // Arizona, USA
+  'us-west-3'     // Utah, USA
+];
 
 async function runCommandviaSSH(instance_ip, commandString) {
   const ssh = new NodeSSH(); // ANSH
@@ -139,107 +152,262 @@ async function uploadFileToS3(instance_ip, localFilePath, bucketFilePath) {
   }
 }
 
-async function lambdaTrainRoutine(instance_ip, projectName, userId) {
-  console.log("Running training loop on Lambda Labs instance...");
-  const ssh = new NodeSSH(); 
+// Setup Docker container and return container ID
+async function setupDockerContainer(ssh, userId, projectName, io, room) {
+  console.log("Setting up Docker container...");
+  
+  // Emit status update to the client
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'setup',
+      status: 'running',
+      message: 'Setting up Docker container...'
+    });
+  }
+  
+  // cd into correct workspace
+  const cdCommand = `cd ${userId}/${projectName}`;
+  const cdResult = await ssh.execCommand(cdCommand);
+  console.log("[Change Directory]", cdResult.stdout);
+  if (cdResult.stderr) {
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'setup',
+        status: 'error',
+        message: `Failed to change directory: ${cdResult.stderr}`
+      });
+    }
+    throw new Error(`Failed to change directory: ${cdResult.stderr}`);
+  }
+
+  // start docker image with correct options
+  const dockerRunCommand =
+    'sudo docker run \
+          --gpus all \
+          -u "$(id -u)" \
+          -v "$(pwd)":/workspace \
+          -v /home/ubuntu/.cache:/home/user/.cache \
+          -p 7007:7007 \
+          --rm \
+          -d \
+          --shm-size=40gb \
+          -e XDG_DATA_HOME=/workspace/.local/share \
+          -e XDG_CACHE_HOME=/workspace/.cache \
+          -e MPLCONFIGDIR=/workspace/.config/matplotlib \
+          ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
+  
+  const dockerResult = await ssh.execCommand(dockerRunCommand);
+  console.log("[Docker Setup]", dockerResult.stdout);
+  if (dockerResult.stderr) {
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'setup',
+        status: 'error',
+        message: `Docker container setup failed: ${dockerResult.stderr}`
+      });
+    }
+    throw new Error(`Docker container setup failed: ${dockerResult.stderr}`);
+  }
+  
+  const containerId = dockerResult.stdout.trim();
+  console.log(`Docker container started with ID: ${containerId}`);
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'setup',
+      status: 'completed',
+      message: 'Docker container setup completed',
+      containerId: containerId
+    });
+  }
+  
+  return containerId;
+}
+
+// Process data step
+async function processData(ssh, containerId, userId, projectName, outputDir, io, room) {
+  console.log("Processing data...");
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'process',
+      status: 'running',
+      message: 'Processing video data...'
+    });
+  }
+  
+  const processCommand = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && \
+  ns-process-data video --data ./*.MP4 --output-dir ${outputDir} --num-downscales=0 --gpu'`;
+  
+  const processResult = await ssh.execCommand(processCommand);
+  console.log("[Data Processing]", processResult.stdout);
+  if (processResult.stderr && processResult.stderr.includes("Error")) {
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'process',
+        status: 'error',
+        message: `Data processing failed: ${processResult.stderr}`
+      });
+    }
+    throw new Error(`Data processing failed: ${processResult.stderr}`);
+  }
+  
+  console.log("Data processing completed successfully");
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'process',
+      status: 'completed',
+      message: 'Video data processing completed successfully'
+    });
+  }
+  
+  return processResult;
+}
+
+// Training model step
+async function trainModel(ssh, containerId, userId, projectName, dataDir, io, room) {
+  console.log("Training model...");
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'train',
+      status: 'running',
+      message: 'Training 3D model... This may take several minutes.'
+    });
+  }
+  
+  const trainCommand = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && \
+  export USER=myuser && \
+  export LOGNAME=myuser && \
+  ns-train splatfacto-big --data "${dataDir}" --viewer.quit-on-train-completion True --pipeline.model.cull_alpha_thresh=0.005 --pipeline.model.use_scale_regularization=True'`;
+  
+  const trainResult = await ssh.execCommand(trainCommand);
+  console.log("[Model Training]", trainResult.stdout);
+  if (trainResult.stderr && trainResult.stderr.includes("Error")) {
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'train',
+        status: 'error',
+        message: `Model training failed: ${trainResult.stderr}`
+      });
+    }
+    throw new Error(`Model training failed: ${trainResult.stderr}`);
+  }
+  
+  console.log("Model training completed successfully");
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'train',
+      status: 'completed',
+      message: 'Model training completed successfully'
+    });
+  }
+  
+  return trainResult;
+}
+
+// Export Gaussian splat step
+async function exportGaussianSplat(ssh, containerId, userId, projectName, outputDir, io, room) {
+  console.log("Exporting Gaussian splat...");
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'export',
+      status: 'running',
+      message: 'Exporting 3D Gaussian splat...'
+    });
+  }
+  
+  const exportCommand = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && \
+  ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${outputDir}" --obb_center 0.0000000000 0.0000000000 0.0000000000 --obb_rotation 0.0000000000 0.0000000000 0.0000000000 --obb_scale 1.0000000000 1.0000000000 1.0000000000'`;
+  
+  const exportResult = await ssh.execCommand(exportCommand);
+  console.log("[Export Gaussian Splat]", exportResult.stdout);
+  if (exportResult.stderr && exportResult.stderr.includes("Error")) {
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'export',
+        status: 'error',
+        message: `Gaussian splat export failed: ${exportResult.stderr}`
+      });
+    }
+    throw new Error(`Gaussian splat export failed: ${exportResult.stderr}`);
+  }
+  
+  console.log("Gaussian splat export completed successfully");
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'export',
+      status: 'completed',
+      message: 'Gaussian splat export completed successfully'
+    });
+  }
+  
+  return exportResult;
+}
+
+// Stop Docker container step
+async function stopDockerContainer(ssh, containerId, io, room) {
+  console.log(`Stopping Docker container: ${containerId}`);
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'cleanup',
+      status: 'running',
+      message: 'Stopping Docker container...'
+    });
+  }
+  
+  const stopCommand = `sudo docker stop ${containerId}`;
+  const stopResult = await ssh.execCommand(stopCommand);
+  console.log("[Container Stop]", stopResult.stdout);
+  
+  if (stopResult.stderr && stopResult.stderr.includes("Error")) {
+    console.warn(`Warning: Issue stopping container: ${stopResult.stderr}`);
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'cleanup',
+        status: 'warning',
+        message: `Warning: Issue stopping container: ${stopResult.stderr}`
+      });
+    }
+  } else {
+    console.log("Docker container stopped successfully");
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'cleanup',
+        status: 'completed',
+        message: 'Docker container stopped successfully'
+      });
+    }
+  }
+  
+  return stopResult;
+}
+
+// Main training routine that orchestrates all steps
+async function lambdaTrainRoutine(instance_ip, projectName, userId, req) {
+  console.log("Running modular training routine on Lambda Labs instance...");
+  const ssh = new NodeSSH();
   const username = "ubuntu";
   const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
   const processedDataOutputDir = projectName + "-output";
   const meshOutputDir = projectName + "-mesh";
-  try {
-    // Connect to instance
-    await ssh.connect({
-      host: instance_ip,
-      username: username,
-      privateKey: privateKey,
+  
+  // Get the io instance if available
+  const io = req ? req.app.get('io') : null;
+  const room = `${userId}_${projectName}`;
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'overall',
+      status: 'started',
+      message: 'Starting training process...'
     });
-
-    // cd into correct workspace
-    var commandString = "cd " + userId + "/" + projectName;
-    var result = await ssh.execCommand(commandString);
-    console.log("[Docker setup]", result.stdout);
-    if (result.stderr) {
-      throw new Error("cd failed", result.stderr);
-    }
-
-    // start docker image with correct options as per nerf studio
-    commandString =
-      'sudo docker run \
-            --gpus all \
-            -u "$(id -u)" \
-            -v "$(pwd)":/workspace \
-            -v /home/ubuntu/.cache:/home/user/.cache \
-            -p 7007:7007 \
-            --rm \
-            -d \
-            --shm-size=40gb \
-            -e XDG_DATA_HOME=/workspace/.local/share \
-            -e XDG_CACHE_HOME=/workspace/.cache \
-            -e MPLCONFIGDIR=/workspace/.config/matplotlib \
-            ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
-    result = await ssh.execCommand(commandString);
-    console.log("[Docker setup]", result.stdout);
-    if (result.stderr) {
-      throw new Error("docker run fail:", result.stderr);
-    }
-    const containerId = result.stdout;
-
-    // Execute the training commands without trying to stop the container from within
-    commandString = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && 
-    ns-process-data video --data ./*.MP4 --output-dir ${processedDataOutputDir} --num-downscales=0 --gpu &&
-    export USER=myuser &&
-    export LOGNAME=myuser &&
-    ns-train splatfacto-big --data "${processedDataOutputDir}" --viewer.quit-on-train-completion True --pipeline.model.cull_alpha_thresh=0.005 --pipeline.model.use_scale_regularization=True &&
-    ns-export gaussian-splat --load-config outputs/*/*/*/config.yml --output-dir "${meshOutputDir}" --obb_center 0.0000000000 0.0000000000 0.0000000000 --obb_rotation 0.0000000000 0.0000000000 0.0000000000 --obb_scale 1.0000000000 1.0000000000 1.0000000000'`;
-
-    result = await ssh.execCommand(commandString);
-    console.log("[Training]", result.stdout);
-    if (result.stderr && result.stderr.includes("Error")) {
-      throw new Error("Training loop failed", result.stderr);
-    }
-
-    // Stop the Docker container from outside
-    console.log("Stopping Docker container:", containerId);
-    const stopCommand = `sudo docker stop ${containerId}`;
-    const stopResult = await ssh.execCommand(stopCommand);
-    console.log("[Container Stop]", stopResult.stdout);
-    if (stopResult.stderr) {
-      console.error("Warning: Issue stopping container:", stopResult.stderr);
-      // Continue execution even if container stop had issues
-    }
-
-    return {
-      command_status: "success",
-      message: "Command executed successfully",
-      result: {
-        stdout: result.stdout,
-        stderr: result.stderr,
-      },
-    };
-  } catch (error) {
-    console.error("Error running command on the instance:", error);
-    return {
-      command_status: "fail",
-      message: "Error running command on the instance",
-      error: {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        details: error.response?.data,
-        message: error.message,
-      },
-    };
-  } finally {
-    ssh.dispose();
   }
-}
-
-async function convertPlyToSplat(instance_ip, userId, projectName) {
-  console.log("Converting PLY to SPLAT format...");
-  const ssh = new NodeSSH();
-  const username = "ubuntu";
-  const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
-  const meshOutputDir = projectName + "-mesh";
-  const plyFilePath = `/home/ubuntu/${userId}/${projectName}/${meshOutputDir}/splat.ply`;
   
   try {
     // Connect to instance
@@ -249,73 +417,95 @@ async function convertPlyToSplat(instance_ip, userId, projectName) {
       privateKey: privateKey,
     });
 
-    // Create a Python script for PLY to SPLAT conversion
-    const pythonScript = `
-import os
-from plyfile import PlyData
-import numpy as np
-from io import BytesIO
+    // Execute each step in sequence
+    const containerId = await setupDockerContainer(ssh, userId, projectName, io, room);
+    
+    await processData(ssh, containerId, userId, projectName, processedDataOutputDir, io, room);
+    
+    await trainModel(ssh, containerId, userId, projectName, processedDataOutputDir, io, room);
+    
+    await exportGaussianSplat(ssh, containerId, userId, projectName, meshOutputDir, io, room);
+    
+    await stopDockerContainer(ssh, containerId, io, room);
 
-def process_ply_to_splat(ply_file_path):
-    plydata = PlyData.read(ply_file_path)
-    vert = plydata["vertex"]
-    sorted_indices = np.argsort(
-        -np.exp(vert["scale_0"] + vert["scale_1"] + vert["scale_2"])
-        / (1 + np.exp(-vert["opacity"]))
-    )
-    buffer = BytesIO()
-    for idx in sorted_indices:
-        v = plydata["vertex"][idx]
-        position = np.array([v["x"], v["y"], v["z"]], dtype=np.float32)
-        scales = np.exp(
-            np.array(
-                [v["scale_0"], v["scale_1"], v["scale_2"]],
-                dtype=np.float32,
-            )
-        )
-        rot = np.array(
-            [v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]],
-            dtype=np.float32,
-        )
-        SH_C0 = 0.28209479177387814
-        color = np.array(
-            [
-                0.5 + SH_C0 * v["f_dc_0"],
-                0.5 + SH_C0 * v["f_dc_1"],
-                0.5 + SH_C0 * v["f_dc_2"],
-                1 / (1 + np.exp(-v["opacity"])),
-            ]
-        )
-        buffer.write(position.tobytes())
-        buffer.write(scales.tobytes())
-        buffer.write((color * 255).clip(0, 255).astype(np.uint8).tobytes())
-        buffer.write(
-            ((rot / np.linalg.norm(rot)) * 128 + 128)
-            .clip(0, 255)
-            .astype(np.uint8)
-            .tobytes()
-        )
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'overall',
+        status: 'completed',
+        message: 'All processing steps completed successfully'
+      });
+    }
 
-    return buffer.getvalue()
+    return {
+      command_status: "success",
+      message: "All processing steps completed successfully",
+      containerId: containerId,
+    };
+  } catch (error) {
+    console.error("Error in training routine:", error);
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'overall',
+        status: 'error',
+        message: `Training routine failed: ${error.message}`
+      });
+    }
+    
+    return {
+      command_status: "fail",
+      message: `Training routine failed: ${error.message}`,
+      error: {
+        message: error.message,
+      },
+    };
+  } finally {
+    ssh.dispose();
+  }
+}
 
-def save_splat_file(splat_data, output_path):
-    with open(output_path, "wb") as f:
-        f.write(splat_data)
+async function convertPlyToSplat(instance_ip, userId, projectName, req) {
+  console.log("Converting PLY to SPLAT format...");
+  const ssh = new NodeSSH();
+  const username = "ubuntu";
+  const privateKey = fs.readFileSync(SSH_KEY_PATH, "utf8");
+  const meshOutputDir = projectName + "-mesh";
+  const plyFilePath = `/home/ubuntu/${userId}/${projectName}/${meshOutputDir}/splat.ply`;
+  const splatFilePath = plyFilePath.replace('.ply', '.splat');
+  
+  // Get the io instance if available
+  const io = req ? req.app.get('io') : null;
+  const room = `${userId}_${projectName}`;
+  
+  if (io) {
+    io.to(room).emit('trainingStatus', {
+      step: 'convert',
+      status: 'running',
+      message: 'Converting PLY to SPLAT format...'
+    });
+  }
+  
+  try {
+    // Connect to instance
+    await ssh.connect({
+      host: instance_ip,
+      username: username,
+      privateKey: privateKey,
+    });
 
-# Input and output file paths
-ply_file_path = "${plyFilePath}"
-output_file_path = "${plyFilePath.replace('.ply', '.splat')}"
-
-# Convert PLY to SPLAT
-print(f"Processing {ply_file_path}...")
-splat_data = process_ply_to_splat(ply_file_path)
-save_splat_file(splat_data, output_file_path)
-print(f"Saved {output_file_path}")
-`;
-
-    // Save the Python script to a temporary file on the instance
-    const scriptPath = `/home/ubuntu/${userId}/${projectName}/convert_ply_to_splat.py`;
-    await ssh.execCommand(`echo '${pythonScript}' > ${scriptPath}`);
+    // Upload the Python script to the instance
+    console.log("Uploading PLY to SPLAT conversion script...");
+    // Read the script file from the local filesystem
+    const scriptContent = fs.readFileSync(`${__dirname}/../scripts/ply_to_splat.py`, 'utf8');
+    const remoteScriptPath = `/home/ubuntu/${userId}/${projectName}/ply_to_splat.py`;
+    
+    // Create the script on the remote machine
+    await ssh.execCommand(`cat > ${remoteScriptPath} << 'EOL'
+${scriptContent}
+EOL`);
+    
+    // Make the script executable
+    await ssh.execCommand(`chmod +x ${remoteScriptPath}`);
     
     // Install required Python packages
     console.log("Installing required Python packages...");
@@ -327,10 +517,10 @@ print(f"Saved {output_file_path}")
     
     // Run the conversion script
     console.log("Running PLY to SPLAT conversion...");
-    const convertCmd = `python ${scriptPath}`;
+    const convertCmd = `python ${remoteScriptPath} ${plyFilePath} ${splatFilePath}`;
     const convertResult = await ssh.execCommand(convertCmd);
     
-    if (convertResult.stderr) {
+    if (convertResult.stderr && convertResult.stderr.includes("Error")) {
       console.error("Error during PLY to SPLAT conversion:", convertResult.stderr);
       throw new Error(`PLY to SPLAT conversion failed: ${convertResult.stderr}`);
     }
@@ -338,7 +528,6 @@ print(f"Saved {output_file_path}")
     console.log("Conversion output:", convertResult.stdout);
     
     // Upload the SPLAT file to S3
-    const splatFilePath = plyFilePath.replace('.ply', '.splat');
     const bucketName = process.env.S3_BUCKET_NAME;
     const s3SplatPath = `s3://${bucketName}/${userId}/${projectName}/point_cloud.splat`;
     
@@ -346,12 +535,20 @@ print(f"Saved {output_file_path}")
     const uploadCmd = `aws s3 cp ${splatFilePath} ${s3SplatPath}`;
     const uploadResult = await ssh.execCommand(uploadCmd);
     
-    if (uploadResult.stderr) {
+    if (uploadResult.stderr && uploadResult.stderr.includes("Error")) {
       console.error("Error uploading SPLAT file to S3:", uploadResult.stderr);
       throw new Error(`Failed to upload SPLAT file to S3: ${uploadResult.stderr}`);
     }
     
     console.log("SPLAT file uploaded successfully to S3");
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'convert',
+        status: 'completed',
+        message: 'PLY to SPLAT conversion completed successfully'
+      });
+    }
     
     return {
       command_status: "success",
@@ -361,6 +558,15 @@ print(f"Saved {output_file_path}")
     
   } catch (error) {
     console.error("Error in PLY to SPLAT conversion:", error);
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'convert',
+        status: 'error',
+        message: `PLY to SPLAT conversion failed: ${error.message}`
+      });
+    }
+    
     return {
       command_status: "fail",
       message: "Error in PLY to SPLAT conversion",
@@ -377,6 +583,11 @@ print(f"Saved {output_file_path}")
 router.post("/train", async (req, res) => {
   const { userId, projectName } = req.body;
   console.log(userId, projectName);
+  
+  // Get Socket.IO instance
+  const io = req.app.get('io');
+  const room = `${userId}_${projectName}`;
+  
   try {
     // Look for any running instances of the desired type
     const existingInstancesResponse = await axios.get(
@@ -387,17 +598,35 @@ router.post("/train", async (req, res) => {
     );
     const runningInstance = existingInstancesResponse.data.data.find(
       (instance) =>
-        instance.instance_type.name === INSTANCE_TYPE &&
+        INSTANCE_TYPE.includes(instance.instance_type.name) &&
         instance.status === "active"
     );
     if (!runningInstance) {
       console.log("No existing instance found. Sending error response...");
+      
+      if (io) {
+        io.to(room).emit('trainingStatus', {
+          step: 'overall',
+          status: 'error',
+          message: 'No running instance found. Please start an instance first.'
+        });
+      }
+      
       throw new Error("No existing instance found");
     }
     console.log(`Found existing running instance: ${runningInstance.id}`);
 
     // Download files from s3 onto lambda labs instance using commands
     console.log("Downloading files from S3 to Lambda Labs instance...");
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'download',
+        status: 'running',
+        message: 'Downloading project files from S3...'
+      });
+    }
+    
     const bucketName = process.env.S3_BUCKET_NAME; // Add your S3 bucket name here
     const localFilePath = `/home/ubuntu/${userId}/${projectName}`; // Destination path on the Lambda Labs instance
     const bucketFilePath = `s3://${bucketName}/${userId}/${projectName}`;
@@ -407,38 +636,90 @@ router.post("/train", async (req, res) => {
       bucketFilePath
     );
     if (s3DownloadOutput.command_status === "fail") {
+      if (io) {
+        io.to(room).emit('trainingStatus', {
+          step: 'download',
+          status: 'error',
+          message: `Failed to download file from S3: ${s3DownloadOutput.error.message}`
+        });
+      }
+      
       throw new Error(
         `Failed to download file from S3: ${s3DownloadOutput.error.message}`
       );
     }
     console.log("File downloaded successfully to the instance:", localFilePath);
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'download',
+        status: 'completed',
+        message: 'Project files downloaded successfully.'
+      });
+    }
 
     // Unzipping the .zip file that we download from s3
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'unzip',
+        status: 'running',
+        message: 'Unzipping project files...'
+      });
+    }
+    
     const unzipCommand = `unzip -o ${localFilePath}/${projectName}.zip -d ${localFilePath}`;
     const unzipResult = await runCommandviaSSH(
       runningInstance.ip,
       unzipCommand
     );
     if (unzipResult.command_status === "fail") {
+      if (io) {
+        io.to(room).emit('trainingStatus', {
+          step: 'unzip',
+          status: 'error',
+          message: `Failed to unzip file: ${unzipResult.error.message}`
+        });
+      }
+      
       throw new Error(`Failed to unzip file: ${unzipResult.error.message}`);
     }
     console.log("File unzipped successfully");
-
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'unzip',
+        status: 'completed',
+        message: 'Project files unzipped successfully.'
+      });
+    }
+    
     // Run training routine
+    // Modified to pass req
     const trainResult = await lambdaTrainRoutine(
       runningInstance.ip,
       projectName,
-      userId
+      userId,
+      req
     );
+
     if (trainResult.command_status === "fail") {
       console.log("Error running training loop");
       throw new Error(
         `Failed to run training loop: ${trainResult.error.message}`
       );
     }
+    
     console.log("Success running training loop");
 
     // Write mesh to s3
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'upload',
+        status: 'running',
+        message: 'Uploading 3D mesh to S3...'
+      });
+    }
+    
     const meshOutputDir = projectName + "-mesh";
     const meshFilePath = `/home/ubuntu/${userId}/${projectName}/${meshOutputDir}`;
     const meshBucketFilePath = `s3://${bucketName}/${userId}/${projectName}/${meshOutputDir}`;
@@ -448,25 +729,52 @@ router.post("/train", async (req, res) => {
       meshBucketFilePath
     );
     if (s3UploadOutput.command_status === "fail") {
+      if (io) {
+        io.to(room).emit('trainingStatus', {
+          step: 'upload',
+          status: 'error',
+          message: `Failed to upload mesh to S3: ${s3UploadOutput.error.message}`
+        });
+      }
+      
       throw new Error(
         `Failed to upload mesh to S3: ${s3UploadOutput.error.message}`
       );
     }
     console.log("Mesh uploaded successfully to S3");
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'upload',
+        status: 'completed',
+        message: '3D mesh uploaded successfully to S3.'
+      });
+    }
 
     // Convert .ply to .splat and upload to S3
     const plyToSplatResult = await convertPlyToSplat(
       runningInstance.ip,
       userId,
-      projectName
+      projectName,
+      req
     );
+    
     if (plyToSplatResult.command_status === "fail") {
       throw new Error(
         `Failed to convert PLY to SPLAT: ${plyToSplatResult.error.message}`
       );
     }
     console.log("PLY converted to SPLAT and uploaded to S3");
-
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'final',
+        status: 'completed',
+        message: 'Training process completed. Your 3D model is ready to view.',
+        splatPath: plyToSplatResult.splatPath
+      });
+    }
+    
     res.status(200).json({
       status: "success",
       message: "Training completed, mesh and splat files uploaded",
@@ -483,6 +791,14 @@ router.post("/train", async (req, res) => {
       data: error.response?.data,
       message: error.message,
     });
+    
+    if (io) {
+      io.to(room).emit('trainingStatus', {
+        step: 'overall',
+        status: 'error',
+        message: `Training failed: ${error.message}`
+      });
+    }
 
     res.status(error.response?.status || 500).json({
       message: "Error training model",
@@ -501,8 +817,8 @@ router.post("/start_instance", async (req, res) => {
   console.log("Starting Lambda Labs instance...");
 
   // Predefined priority list of instance types
-  const preferredInstanceTypes = [INSTANCE_TYPE];
-
+  const preferredInstanceTypes = INSTANCE_TYPE;
+  
   try {
     // STEP 1: Check if there's already a running instance
     const existingInstancesResponse = await axios.get(
@@ -512,18 +828,20 @@ router.post("/start_instance", async (req, res) => {
       }
     );
 
+    // Only consider running instances in allowed regions
     const runningInstance = existingInstancesResponse.data.data.find(
       (instance) =>
         preferredInstanceTypes.includes(instance.instance_type.name) &&
+        ALLOWED_REGIONS.includes(instance.region.name) &&
         instance.status === "active"
     );
 
     if (runningInstance) {
-      console.log(`Found existing running instance: ${runningInstance.id}`);
+      console.log(`Found existing running instance: ${runningInstance.id} in region ${runningInstance.region.name}`);
       return res.json({
         instanceId: runningInstance.id,
         instanceIP: runningInstance.ip,
-        region: runningInstance.region_name,
+        region: runningInstance.region.name,
         instance_status: "existing",
       });
     }
@@ -538,27 +856,32 @@ router.post("/start_instance", async (req, res) => {
 
     const availableData = instanceTypesResponse.data.data;
 
+    console.log(availableData);
+
     let selectedType = null;
     let selectedRegion = null;
 
-    // STEP 3: Loop through preferred types and check for capacity
+    // STEP 3: Loop through preferred types and check for capacity in allowed regions
     for (const type of preferredInstanceTypes) {
       const instanceInfo = availableData[type];
-      if (
-        instanceInfo &&
-        instanceInfo.regions_with_capacity_available.length > 0
-      ) {
-        selectedType = type;
-        selectedRegion = instanceInfo.regions_with_capacity_available[0].name; // Pick first region with capacity
-        console.log(
-          `Selected instance type: ${selectedType} in ${selectedRegion}`
-        );
-        break;
+      if (instanceInfo && instanceInfo.regions_with_capacity_available.length > 0) {
+        // Filter to only allowed regions
+        const availableAllowedRegions = instanceInfo.regions_with_capacity_available
+          .filter(region => ALLOWED_REGIONS.includes(region.name));
+        
+        if (availableAllowedRegions.length > 0) {
+          selectedType = type;
+          selectedRegion = availableAllowedRegions[0].name; // Pick first allowed region with capacity
+          console.log(
+            `Selected instance type: ${selectedType} in ${selectedRegion}`
+          );
+          break;
+        }
       }
     }
 
     if (!selectedType || !selectedRegion) {
-      throw new Error("No capacity available for preferred instance types.");
+      throw new Error("No capacity available for preferred instance types in US regions.");
     }
 
     // STEP 4: Launch instance
@@ -649,12 +972,19 @@ router.post("/stop_instance", async (req, res) => {
       }
     );
 
-    const running_instances = runningInstanceResponse.data.data;
+    // Filter for instances in allowed regions
+    const running_instances = runningInstanceResponse.data.data.filter(
+      instance => 
+        INSTANCE_TYPE.includes(instance.instance_type.name) &&
+        ALLOWED_REGIONS.includes(instance.region.name) &&
+        instance.status === "active"
+    );
+    
     if (running_instances.length > 0) {
-      console.log("Found running instances:", running_instances[0].id);
+      console.log(`Found running instance: ${running_instances[0].id} in region ${running_instances[0].region.name}`);
       instanceId = running_instances[0].id;
     } else {
-      throw new Error("No running instances found");
+      throw new Error("No running instances found in specified US regions");
     }
 
     const terminateResponse = await axios.post(
@@ -704,13 +1034,15 @@ router.get("/check_instance", async (req, res) => {
     
     const runningInstance = existingInstancesResponse.data.data.find(
       (instance) =>
-        instance.instance_type.name === INSTANCE_TYPE &&
+        INSTANCE_TYPE.includes(instance.instance_type.name) &&
+        ALLOWED_REGIONS.includes(instance.region.name) &&
         instance.status === "active"
     );
 
     const bootingInstance = existingInstancesResponse.data.data.find(
       (instance) =>
-        instance.instance_type.name === INSTANCE_TYPE &&
+        INSTANCE_TYPE.includes(instance.instance_type.name) &&
+        ALLOWED_REGIONS.includes(instance.region.name) &&
         instance.status === "booting"
     );
     

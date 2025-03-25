@@ -71,30 +71,16 @@ const Projects = () => {
     setInstanceStatus("loading");
     try {
       const response = await axios.post("http://localhost:8000/lambda/start_instance");
-      if (
-        response.data.instance_status === "launched" ||
-        response.data.instance_status === "existing"
-      ) {
-        const intervalId = setInterval(async () => {
-          try {
-            const checkResponse = await axios.get("http://localhost:8000/lambda/check_instance");
-            if (checkResponse.data.instance && checkResponse.data.instance.status === "active") {
-              setInstanceStatus("running");
-              clearInterval(intervalId);
-            }
-          } catch (error) {
-            console.error("Error polling instance status:", error);
-          }
-        }, 30000); // Check every 5 seconds
-        // Clear interval after 5 minutes maximum (prevent infinite polling)
-        setTimeout(() => {
-          clearInterval(intervalId);
-          checkInstanceStatus();
-        }, 300000);
+      if (response.data.instance_status !== "launched" && 
+          response.data.instance_status !== "existing") {
+        // If the instance didn't start correctly, update the status
+        setInstanceStatus("stopped");
+        setError("Failed to start instance. Please try again later.");
       }
+      // No need for additional polling - the useEffect will handle it
     } catch (error) {
       console.error("Error starting instance:", error);
-      setError("Failed to start instance. Please try again later.");
+      setError("Failed to start instance. Please try again later. Instance capacity may be full.");
       setInstanceStatus("stopped");
     }
   };
