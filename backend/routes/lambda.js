@@ -236,11 +236,29 @@ async function processData(ssh, containerId, userId, projectName, outputDir, io,
     });
   }
   
+  // Construct the processing command
   const processCommand = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && \
   ns-process-data video --data ./*.MP4 --output-dir ${outputDir} --num-downscales=0 --gpu'`;
   
-  const processResult = await ssh.execCommand(processCommand);
-  console.log("[Data Processing]", processResult.stdout);
+  console.log("Executing command with streaming output:", processCommand);
+  
+  // Execute command with stream options
+  const processResult = await ssh.execCommand(processCommand, {
+    onStdout: (chunk) => {
+      // Stream each chunk of stdout to the console
+      const output = chunk.toString('utf8');
+      console.log("[Data Processing Output]:", output);
+    },
+    onStderr: (chunk) => {
+      // Stream each chunk of stderr to the console
+      const error = chunk.toString('utf8');
+      console.error("[Data Processing Error]:", error);
+    }
+  });
+  
+  console.log("[Data Processing Complete] Exit Code:", processResult.code);
+  
+  // Check for errors in stderr
   if (processResult.stderr && processResult.stderr.includes("Error")) {
     if (io) {
       io.to(room).emit('trainingStatus', {
