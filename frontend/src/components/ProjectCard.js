@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import axios from "axios";
+import { io } from "socket.io-client";
 
 const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   const { user } = useAuth0();
@@ -8,6 +9,86 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   const [splatFileUrl, setObjFileUrl] = useState(null);
   const [splatFileStatus, setObjFileStatus] = useState("loading");
   const [isTraining, setIsTraining] = useState(false);
+  const [trainingProgress, setTrainingProgress] = useState({
+    step: '',
+    status: '',
+    message: '',
+    startTime: null
+  });
+  const socketRef = useRef(null);
+
+  // Initialize socket connection when component mounts
+  useEffect(() => {
+    // Only create the socket if the user is logged in
+    if (user) {
+      const socket = io("http://localhost:8000", {
+        withCredentials: true
+      });
+      socketRef.current = socket;
+
+      // Set up event listeners for the socket
+      socket.on("connect", () => {
+        console.log("Socket connected:", socket.id);
+      });
+
+      socket.on("connect_error", (error) => {
+        console.error("Socket connection error:", error);
+      });
+
+      socket.on("trainingStatus", (data) => {
+        console.log("Training status update:", data);
+        setTrainingProgress(prev => ({
+          ...prev,
+          step: data.step,
+          status: data.status,
+          message: data.message
+        }));
+
+        // If final step is completed, update the UI accordingly
+        if (data.step === 'final' && data.status === 'completed') {
+          setIsTraining(false);
+          
+          // Update the splat file URL if it's available
+          if (data.splatPath) {
+            const bucketName = process.env.REACT_APP_S3_BUCKET_NAME || 'dex-model-storage';
+            const splatFileUrl = `https://${bucketName}.s3.amazonaws.com/${data.splatPath}`;
+            setObjFileUrl(splatFileUrl);
+            setObjFileStatus("available");
+          }
+        }
+
+        // If there's an error, stop training
+        if (data.status === 'error') {
+          setIsTraining(false);
+        }
+      });
+
+      // Clean up the socket when component unmounts
+      return () => {
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
+      };
+    }
+  }, [user]);
+
+  // Subscribe to training updates for this project when modal opens
+  useEffect(() => {
+    if (isModalOpen && user && socketRef.current) {
+      const userId = user.sub.split('|')[1];
+      
+      // Subscribe to updates for this specific project
+      socketRef.current.emit('subscribe', {
+        userId: userId,
+        projectId: project
+      });
+      
+      return () => {
+        // No specific cleanup needed here since we maintain the socket
+        // connection at the component level
+      };
+    }
+  }, [isModalOpen, user, project]);
 
   const handleDelete = () => {
     if (window.confirm(`Are you sure you want to delete the project "${project}"?`)) {
@@ -59,6 +140,13 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
 
   const handleTrain = async () => {
     setIsTraining(true);
+    setTrainingProgress({
+      step: 'starting',
+      status: 'running',
+      message: 'Initializing training process...',
+      startTime: new Date()
+    });
+    
     try {
       const userId = user.sub.split('|')[1];
       const response = await axios.post('http://localhost:8000/lambda/train', {
@@ -66,6 +154,8 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
         projectName: project
       });
 
+      // The response happens when everything is complete,
+      // but we'll let the socket events handle progress updates
       if (response.data.status === "success") {
         // If the API returns a direct splatPath, use it instead of searching files
         if (response.data.splatPath) {
@@ -86,10 +176,64 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
       }
     } catch (error) {
       console.error("Error training model:", error);
-      alert("Failed to train model. Please try again later.");
-    } finally {
+      setTrainingProgress(prev => ({
+        ...prev,
+        status: 'error',
+        message: `Training failed: ${error.message || 'Unknown error'}`
+      }));
       setIsTraining(false);
+      alert("Failed to train model. Please try again later.");
     }
+  };
+  
+  // Helper function to render progress indicator
+  const renderProgressStatus = () => {
+    if (!isTraining) return null;
+    
+    const getStepNumber = (step) => {
+      const steps = ['starting', 'download', 'unzip', 'setup', 'process', 'train', 'export', 'convert', 'upload', 'cleanup', 'final'];
+      const index = steps.indexOf(step);
+      return index >= 0 ? index + 1 : 0;
+    };
+    
+    const totalSteps = 11; // Total number of possible steps
+    const currentStep = getStepNumber(trainingProgress.step);
+    const progressPercentage = Math.max(5, Math.min(100, (currentStep / totalSteps) * 100));
+    
+    const getStatusColor = (status) => {
+      switch (status) {
+        case 'error': return 'bg-red-500';
+        case 'warning': return 'bg-yellow-500';
+        case 'completed': return 'bg-green-500';
+        case 'running':
+        default: return 'bg-blue-500';
+      }
+    };
+    
+    const elapsedTime = trainingProgress.startTime 
+      ? Math.floor((new Date() - trainingProgress.startTime) / 1000)
+      : 0;
+    
+    const formatTime = (seconds) => {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    return (
+      <div className="mt-4">
+        <div className="flex justify-between mb-1">
+          <span className="text-sm font-medium text-gray-700">{trainingProgress.message}</span>
+          <span className="text-sm font-medium text-gray-700">{formatTime(elapsedTime)}</span>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-2.5">
+          <div 
+            className={`h-2.5 rounded-full ${getStatusColor(trainingProgress.status)}`} 
+            style={{width: `${progressPercentage}%`}}
+          ></div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -127,10 +271,16 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
             <div className="mt-4 text-gray-700">
               <p><strong>Created On:</strong> {project.createdOn || "Unknown date"}</p>
 
-              {splatFileStatus === "loading" && (
+              {/* Show progress if training is in progress */}
+              {isTraining && renderProgressStatus()}
+
+              {/* Show loading indicator when checking status */}
+              {splatFileStatus === "loading" && !isTraining && (
                 <p className="text-gray-500 mt-2">Loading...</p>
               )}
-              {splatFileStatus === "available" && (
+              
+              {/* Show View button if splat file is available */}
+              {splatFileStatus === "available" && !isTraining && (
                 <button
                   onClick={handleViewRendering}
                   className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200"
@@ -138,7 +288,9 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
                   View 3D Rendering
                 </button>
               )}
-              {splatFileStatus === "unavailable" && (
+              
+              {/* Show Train button if needed */}
+              {splatFileStatus === "unavailable" && !isTraining && (
                 <>
                   {!instanceRunning ? (
                     <p className="mt-4 text-gray-500 text-sm">Start the instance to train your model</p>
