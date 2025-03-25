@@ -83,6 +83,19 @@ async function runCommandviaSSH(instance_ip, commandString) {
   }
 }
 
+async function sshSetup(instance_ip) {
+  ssh_setup_command = "sudo sed -i 's/#ClientAliveInterval.*/ClientAliveInterval 60/' /etc/ssh/sshd_config && sudo sed -i 's/#ClientAliveCountMax.*/ClientAliveCountMax 120/' /etc/ssh/sshd_config && sudo systemctl restart ssh";
+  commandOutput = await runCommandviaSSH(instance_ip, ssh_setup_command);
+
+  if (commandOutput.command_status === "fail") {
+    console.log("Error setting up ssh");
+  } else {
+    console.log("Success setting up ssh");
+  }
+
+  return commandOutput;
+}
+
 async function dockerSetup(instance_ip) {
   // use bash via ssh to run docker commands to pull in a docker image and start it
   docker_pull_command =
@@ -940,6 +953,12 @@ router.post("/start_instance", async (req, res) => {
     console.log(`Instance active, IP: ${instanceIP}`);
 
     // STEP 6: Docker + AWS setup
+    var result = await sshSetup(instanceIP);
+    if (result.command_status === "fail") {
+      throw new Error("Error setting up ssh", result.error);
+    }
+    console.log("SSH setup completed");
+
     var result = await dockerSetup(instanceIP);
     if (result.command_status === "fail") {
       throw new Error("Error setting up docker", result.error);
