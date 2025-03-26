@@ -297,14 +297,15 @@ async function processData(ssh, containerId, userId, projectName, outputDir, io,
 }
 
 // Training model step
-async function trainModel(ssh, containerId, userId, projectName, dataDir, io, room) {
+async function trainModel(ssh, containerId, userId, projectName, dataDir, io, room, instanceIp) {
   console.log("Training model...");
   
   if (io) {
     io.to(room).emit('trainingStatus', {
       step: 'train',
       status: 'running',
-      message: 'Training 3D model... This may take several minutes.'
+      message: 'Training 3D model... This may take several minutes.',
+      viewerUrl: `http://${instanceIp}:7007`
     });
   }
   
@@ -453,7 +454,7 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId, req) {
     
     await processData(ssh, containerId, userId, projectName, processedDataOutputDir, io, room);
     
-    await trainModel(ssh, containerId, userId, projectName, processedDataOutputDir, io, room);
+    await trainModel(ssh, containerId, userId, projectName, processedDataOutputDir, io, room, instance_ip);
     
     await exportGaussianSplat(ssh, containerId, userId, projectName, meshOutputDir, io, room);
     

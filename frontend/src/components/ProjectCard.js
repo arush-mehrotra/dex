@@ -15,6 +15,7 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
     message: '',
     startTime: null
   });
+  const [trainingViewerUrl, setTrainingViewerUrl] = useState(null);
   const socketRef = useRef(null);
 
   // Initialize socket connection when component mounts
@@ -43,6 +44,16 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
           status: data.status,
           message: data.message
         }));
+
+        // If we receive a viewerUrl, store it
+        if (data.viewerUrl) {
+          setTrainingViewerUrl(data.viewerUrl);
+        }
+
+        // Reset the viewer URL when training completes or errors
+        if (data.status === 'completed' || data.status === 'error') {
+          setTrainingViewerUrl(null);
+        }
 
         // If final step is completed, update the UI accordingly
         if (data.step === 'final' && data.status === 'completed') {
@@ -232,6 +243,26 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
             style={{width: `${progressPercentage}%`}}
           ></div>
         </div>
+        
+        {/* Add the training viewer link when available */}
+        {trainingProgress.step === 'train' && trainingProgress.status === 'running' && trainingViewerUrl && (
+          <div className="mt-4">
+            <a 
+              href={trainingViewerUrl} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200"
+            >
+              <span className="mr-2">View Training Progress</span>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+            <p className="text-xs text-gray-500 mt-1">
+              Opens the nerfstudio training visualization in a new tab
+            </p>
+          </div>
+        )}
       </div>
     );
   };

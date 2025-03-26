@@ -3,7 +3,7 @@ import { useAuth0, withAuthenticationRequired } from "@auth0/auth0-react";
 import axios from "axios";
 import Navbar from "../components/Navbar";
 import ProjectCard from "../components/ProjectCard";
-import { Power } from "lucide-react";
+import { Power, AlertCircle, CheckCircle, Clock, Cloud, CloudOff, Server } from "lucide-react";
 import CreateProjectPopup from "../components/CreateProjectPopup";
 
 const Projects = () => {
@@ -12,6 +12,7 @@ const Projects = () => {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [instanceStatus, setInstanceStatus] = useState("checking");
+  const [instanceDetails, setInstanceDetails] = useState(null);
   const [showPopup, setShowPopup] = useState(false);
 
   const fetchProjects = useCallback(async () => {
@@ -38,16 +39,21 @@ const Projects = () => {
   const checkInstanceStatus = useCallback(async () => {
     try {
       const response = await axios.get("http://localhost:8000/lambda/check_instance");
+      
       if (response.data.instance && response.data.instance.status === "active") {
         setInstanceStatus("running");
+        setInstanceDetails(response.data.instance);
       } else if (response.data.instance && response.data.instance.status === "booting") {
         setInstanceStatus("loading");
+        setInstanceDetails(response.data.instance);
       } else {
         setInstanceStatus("stopped");
+        setInstanceDetails(null);
       }
     } catch (error) {
       console.error("Error checking instance status:", error);
       setInstanceStatus("stopped");
+      setInstanceDetails(null);
     }
   }, []);
 
@@ -76,6 +82,14 @@ const Projects = () => {
         // If the instance didn't start correctly, update the status
         setInstanceStatus("stopped");
         setError("Failed to start instance. Please try again later.");
+      } else if (response.data.instanceIP) {
+        // Update instance details if available
+        setInstanceDetails({
+          ip: response.data.instanceIP,
+          region: response.data.region,
+          type: response.data.instanceType,
+          id: response.data.instanceId
+        });
       }
       // No need for additional polling - the useEffect will handle it
     } catch (error) {
@@ -90,6 +104,7 @@ const Projects = () => {
     try {
       await axios.post("http://localhost:8000/lambda/stop_instance");
       setInstanceStatus("stopped");
+      setInstanceDetails(null);
     } catch (error) {
       console.error("Error stopping instance:", error);
       setError("Failed to stop instance. Please try again later.");
@@ -119,6 +134,60 @@ const Projects = () => {
     }
   }, [user, instanceStatus, fetchProjects, checkInstanceStatus]);
 
+  const getStatusIcon = () => {
+    switch (instanceStatus) {
+      case "running":
+        return <CheckCircle className="w-5 h-5 text-green-500" />;
+      case "loading":
+        return <Clock className="w-5 h-5 text-blue-500 animate-pulse" />;
+      case "checking":
+        return <AlertCircle className="w-5 h-5 text-yellow-500" />;
+      case "stopped":
+        return <CloudOff className="w-5 h-5 text-gray-500" />;
+      default:
+        return <AlertCircle className="w-5 h-5 text-yellow-500" />;
+    }
+  };
+
+  const getStatusColor = () => {
+    switch (instanceStatus) {
+      case "running":
+        return "bg-green-50 border-green-200 text-green-700";
+      case "loading":
+        return "bg-blue-50 border-blue-200 text-blue-700";
+      case "checking":
+        return "bg-yellow-50 border-yellow-200 text-yellow-700";
+      case "stopped":
+        return "bg-gray-50 border-gray-200 text-gray-700";
+      default:
+        return "bg-gray-50 border-gray-200 text-gray-700";
+    }
+  };
+
+  const getInstanceTypeLabel = () => {
+    if (!instanceDetails || !instanceDetails.instance_type) return null;
+    
+    // Show the instance type if available
+    return (
+      <div className="text-xs flex items-center mt-1">
+        <Server className="w-3 h-3 mr-1" />
+        <span>{instanceDetails.instance_type.name || "GPU Instance"}</span>
+      </div>
+    );
+  };
+
+  const getRegionLabel = () => {
+    if (!instanceDetails || !instanceDetails.region) return null;
+    
+    // Show the region if available
+    return (
+      <div className="text-xs flex items-center mt-1">
+        <Cloud className="w-3 h-3 mr-1" />
+        <span>{instanceDetails.region.name || "Unknown region"}</span>
+      </div>
+    );
+  };
+
   if (isLoading) {
     return <p className="text-center mt-10">Loading...</p>;
   }
@@ -132,7 +201,7 @@ const Projects = () => {
             <h1 className="text-2xl font-bold">Your Projects</h1>
             <button
               onClick={togglePopup}
-              className="bg-teal-500 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-teal-600"
+              className="bg-teal-500 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-teal-600 shadow-sm"
             >
               <span>Create new project</span>
               <span className="bg-white text-teal-500 rounded-full h-6 w-6 flex items-center justify-center">
@@ -141,30 +210,32 @@ const Projects = () => {
             </button>
           </div>
           <div className="flex gap-4 items-center">
-            <span
-              className={`px-3 py-1 rounded-full text-sm ${
-                instanceStatus === "checking"
-                  ? "bg-yellow-100 text-yellow-800"
-                  : instanceStatus === "running"
-                  ? "bg-green-100 text-green-800"
-                  : instanceStatus === "loading"
-                  ? "bg-blue-100 text-blue-800"
-                  : "bg-gray-100 text-gray-800"
-              }`}
-            >
-              Instance:{" "}
-              {instanceStatus === "checking"
-                ? "Checking..."
-                : instanceStatus === "loading"
-                ? "Loading..."
-                : instanceStatus}
-            </span>
+            {/* Enhanced status badge */}
+            <div className={`flex flex-col rounded-lg shadow-sm border px-4 py-2 ${getStatusColor()}`}>
+              <div className="flex items-center">
+                {getStatusIcon()}
+                <div className="ml-2">
+                  <div className="font-medium flex items-center">
+                    <span>Instance:</span>
+                    <span className="ml-1 capitalize">{instanceStatus === "checking" ? "Checking..." : instanceStatus === "loading" ? "Starting..." : instanceStatus}</span>
+                  </div>
+                  {instanceStatus === "running" && (
+                    <div className="flex flex-col text-xs text-gray-600">
+                      {getInstanceTypeLabel()}
+                      {getRegionLabel()}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            {/* Enhanced action button */}
             <button
               onClick={
                 instanceStatus === "stopped" ? handleStartInstance : handleStopInstance
               }
               disabled={instanceStatus === "checking" || instanceStatus === "loading"}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors duration-200 ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors duration-200 shadow-sm ${
                 instanceStatus === "checking" || instanceStatus === "loading"
                   ? "bg-gray-300 cursor-not-allowed"
                   : instanceStatus === "stopped"
@@ -173,13 +244,15 @@ const Projects = () => {
               }`}
             >
               <Power className="w-4 h-4" />
-              {instanceStatus === "checking"
-                ? "Checking..."
-                : instanceStatus === "loading"
-                ? "Processing..."
-                : instanceStatus === "stopped"
-                ? "Start Instance"
-                : "Stop Instance"}
+              <span>
+                {instanceStatus === "checking"
+                  ? "Checking..."
+                  : instanceStatus === "loading"
+                  ? "Processing..."
+                  : instanceStatus === "stopped"
+                  ? "Start Instance"
+                  : "Stop Instance"}
+              </span>
             </button>
           </div>
         </div>
