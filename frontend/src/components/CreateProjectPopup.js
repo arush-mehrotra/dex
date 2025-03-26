@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import axios from "axios";
 
@@ -9,6 +9,8 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
   const [uploadMessage, setUploadMessage] = useState("");
   const [existingProjects, setExistingProjects] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const fetchExistingProjects = useCallback(async () => {
     try {
@@ -40,6 +42,10 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
     }
   };
 
+  const triggerFileInput = () => {
+    fileInputRef.current.click();
+  };
+
   const handleFormSubmit = async (e) => {
     e.preventDefault();
 
@@ -62,6 +68,9 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
       );
       return;
     }
+
+    // Set loading state to true
+    setIsSubmitting(true);
 
     // Rename the file to match the project name (with .zip extension)
     const renamedFile = new File([file], `${projectName}.zip`, {
@@ -99,6 +108,10 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
     } catch (error) {
       console.error("Error uploading file:", error);
       setUploadMessage("Error uploading file. Check the console for details.");
+      setErrorMessage(`Upload failed: ${error.message || "Unknown error"}`);
+    } finally {
+      // Set loading state to false regardless of outcome
+      setIsSubmitting(false);
     }
   };
 
@@ -106,10 +119,10 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white rounded-lg shadow-lg p-6 w-96">
-        <h2 className="text-xl font-semibold mb-4">Create New Project</h2>
+      <div className="bg-white rounded-lg shadow-lg p-8 w-full max-w-2xl mx-4">
+        <h2 className="text-2xl font-semibold mb-6">Create New Project</h2>
         <form onSubmit={handleFormSubmit}>
-          <div className="mb-4">
+          <div className="mb-6">
             <label
               htmlFor="projectName"
               className="block text-gray-700 font-medium mb-2"
@@ -124,46 +137,113 @@ const CreateProjectPopup = ({ isOpen, onClose, onCreate }) => {
                 setProjectName(e.target.value);
                 setErrorMessage(""); // Clear error message on input change
               }}
-              className="w-full border-gray-300 rounded-lg shadow-sm p-2 focus:ring-teal-500 focus:border-teal-500"
+              className="w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-teal-500 focus:border-teal-500"
               placeholder="Enter project name (use underscores instead of spaces)"
+              disabled={isSubmitting}
             />
           </div>
           {errorMessage && (
             <p className="text-red-500 text-sm mb-4">{errorMessage}</p>
           )}
-          <div className="mb-4">
+          <div className="mb-6">
             <label
               htmlFor="fileUpload"
               className="block text-gray-700 font-medium mb-2"
             >
               Upload Dataset (.zip)
             </label>
-            <input
-              type="file"
-              id="fileUpload"
-              accept=".zip"
-              onChange={handleFileChange}
-              className="w-full"
-            />
+            <div 
+              className="border border-dashed border-gray-300 rounded-lg p-8 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition-colors"
+              onClick={triggerFileInput}
+            >
+              <input
+                type="file"
+                id="fileUpload"
+                accept=".zip"
+                onChange={handleFileChange}
+                className="hidden"
+                disabled={isSubmitting}
+                ref={fileInputRef}
+              />
+              
+              <div className="text-center">
+                {file ? (
+                  <div className="flex flex-col items-center">
+                    <div className="mb-2 text-teal-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-gray-700 font-medium">{file.name}</p>
+                    <p className="text-gray-500 text-sm mt-1">
+                      {(file.size / (1024 * 1024)).toFixed(2)} MB
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFile(null);
+                      }}
+                      className="mt-2 text-sm text-red-500 hover:text-red-700"
+                      disabled={isSubmitting}
+                    >
+                      Remove file
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center">
+                    <div className="mb-2 text-gray-400">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                    </div>
+                    <p className="text-gray-700 font-medium">Drag and drop your file here or click to browse</p>
+                    <p className="text-gray-500 text-sm mt-1">
+                      Upload a zip file containing a video
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-4 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      disabled={isSubmitting}
+                    >
+                      Choose File
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="flex justify-end space-x-2">
+          <div className="flex justify-end space-x-4 mt-8">
             <button
               type="button"
               onClick={onClose}
-              className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400"
+              className="bg-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-400 font-medium"
+              disabled={isSubmitting}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600"
+              disabled={isSubmitting}
+              className={`flex items-center justify-center bg-teal-500 text-white px-6 py-3 rounded-lg transition-colors duration-200 font-medium ${
+                isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-teal-600'
+              }`}
+              style={{ minWidth: '120px' }}
             >
-              Create
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Creating...
+                </>
+              ) : "Create"}
             </button>
           </div>
         </form>
-        {uploadMessage && (
-          <p className="mt-4 text-center text-green-500">{uploadMessage}</p>
+        {uploadMessage && !errorMessage && (
+          <p className="mt-6 text-center text-green-500 font-medium">{uploadMessage}</p>
         )}
       </div>
     </div>

@@ -2,6 +2,19 @@ import React, { useState, useEffect, useRef } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { 
+  Trash2, 
+  Info, 
+  X, 
+  ExternalLink, 
+  PlayCircle, 
+  Calendar, 
+  Check, 
+  AlertCircle, 
+  Loader2, 
+  Eye, 
+  Film
+} from "lucide-react";
 
 const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   const { user } = useAuth0();
@@ -15,7 +28,33 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
     message: '',
     startTime: null
   });
+  const [trainingViewerUrl, setTrainingViewerUrl] = useState(null);
   const socketRef = useRef(null);
+  const modalRef = useRef(null);
+
+  // Create a formatted date for display
+  const formattedDate = new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+
+  // Handle click outside to close modal
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (modalRef.current && !modalRef.current.contains(event.target)) {
+        setIsModalOpen(false);
+      }
+    }
+    
+    if (isModalOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isModalOpen]);
 
   // Initialize socket connection when component mounts
   useEffect(() => {
@@ -43,6 +82,16 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
           status: data.status,
           message: data.message
         }));
+
+        // If we receive a viewerUrl, store it
+        if (data.viewerUrl) {
+          setTrainingViewerUrl(data.viewerUrl);
+        }
+
+        // Reset the viewer URL when training completes or errors
+        if (data.status === 'completed' || data.status === 'error') {
+          setTrainingViewerUrl(null);
+        }
 
         // If final step is completed, update the UI accordingly
         if (data.step === 'final' && data.status === 'completed') {
@@ -221,93 +270,188 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
     };
     
     return (
-      <div className="mt-4">
-        <div className="flex justify-between mb-1">
+      <div className="mt-6 bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <div className="flex justify-between mb-3">
           <span className="text-sm font-medium text-gray-700">{trainingProgress.message}</span>
-          <span className="text-sm font-medium text-gray-700">{formatTime(elapsedTime)}</span>
+          <span className="text-sm font-medium bg-gray-200 rounded-full px-2 py-0.5 text-gray-700">{formatTime(elapsedTime)}</span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-2.5">
+        <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
           <div 
-            className={`h-2.5 rounded-full ${getStatusColor(trainingProgress.status)}`} 
+            className={`h-3 rounded-full ${getStatusColor(trainingProgress.status)} transition-all duration-500 ease-in-out`} 
             style={{width: `${progressPercentage}%`}}
           ></div>
         </div>
+        
+        {/* Add the training viewer link when available */}
+        {trainingProgress.step === 'train' && trainingProgress.status === 'running' && trainingViewerUrl && (
+          <div className="mt-4">
+            <a 
+              href={trainingViewerUrl} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 shadow-sm"
+            >
+              <ExternalLink className="w-4 h-4 mr-2" />
+              <span>View Training Progress</span>
+            </a>
+            <p className="text-xs text-gray-500 mt-2 italic">
+              Opens the nerfstudio training visualization in a new tab
+            </p>
+          </div>
+        )}
       </div>
     );
+  };
+  
+  // Show state badge based on file status
+  const renderStatusBadge = () => {
+    if (isTraining) {
+      return (
+        <div className="absolute top-4 right-4 bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full flex items-center">
+          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+          Training
+        </div>
+      );
+    } else if (splatFileStatus === "available") {
+      return (
+        <div className="absolute top-4 right-4 bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full flex items-center">
+          <Check className="w-3 h-3 mr-1" />
+          Ready
+        </div>
+      );
+    } else if (splatFileStatus === "unavailable") {
+      return (
+        <div className="absolute top-4 right-4 bg-amber-100 text-amber-800 text-xs px-2 py-1 rounded-full flex items-center">
+          <AlertCircle className="w-3 h-3 mr-1" />
+          Untrained
+        </div>
+      );
+    }
+    return null;
   };
 
   return (
     <>
-      <div className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition-shadow duration-200">
-        <h2 className="text-xl font-semibold text-teal-600">{project}</h2>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="mt-4 px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 transition-colors duration-200 mr-2"
-        >
-          View Details
-        </button>
-        <button
-          onClick={handleDelete}
-          className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors duration-200"
-        >
-          Delete Project
-        </button>
+      <div className="bg-white shadow-lg rounded-xl p-6 hover:shadow-xl transition-all duration-300 relative border border-gray-100">
+        {renderStatusBadge()}
+        
+        <div className="flex items-center mb-4">
+          <Film className="text-teal-500 w-5 h-5 mr-2" />
+          <h2 className="text-xl font-bold text-gray-800">{project}</h2>
+        </div>
+        
+        <div className="flex items-center text-sm text-gray-500 mb-5">
+          <Calendar className="w-4 h-4 mr-1" />
+          <span>{formattedDate}</span>
+        </div>
+        
+        <div className="flex space-x-3 mt-4">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex-1 px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors duration-200 shadow-sm flex items-center justify-center"
+          >
+            <Info className="w-4 h-4 mr-2" />
+            View Details
+          </button>
+          <button
+            onClick={handleDelete}
+            className="p-2.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors duration-200"
+            title="Delete Project"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Modal */}
+      {/* Enhanced Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold text-teal-600">{project} Details</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div 
+            ref={modalRef}
+            className="bg-white rounded-xl p-6 max-w-lg w-full mx-auto shadow-2xl transform transition-all duration-300 ease-out"
+          >
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center">
+                <Film className="text-teal-500 w-6 h-6 mr-2" />
+                {project}
+              </h2>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-gray-500 hover:text-gray-700"
+                className="p-1.5 hover:bg-gray-100 rounded-full transition-colors duration-200"
               >
-                ✕
+                <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
             
-            <div className="mt-4 text-gray-700">
-              <p><strong>Created On:</strong> {project.createdOn || "Unknown date"}</p>
-
-              {/* Show progress if training is in progress */}
-              {isTraining && renderProgressStatus()}
-
-              {/* Show loading indicator when checking status */}
-              {splatFileStatus === "loading" && !isTraining && (
-                <p className="text-gray-500 mt-2">Loading...</p>
-              )}
+            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-5">
+              <div className="flex items-center">
+                <Calendar className="w-4 h-4 text-gray-500 mr-2" />
+                <span className="text-gray-700"><strong>Created:</strong> {formattedDate}</span>
+              </div>
               
-              {/* Show View button if splat file is available */}
-              {splatFileStatus === "available" && !isTraining && (
+              <div className="mt-2 flex items-center">
+                <Info className="w-4 h-4 text-gray-500 mr-2" />
+                <span className="text-gray-700">
+                  <strong>Status:</strong> {
+                    isTraining ? 'Training in progress' :
+                    splatFileStatus === "available" ? 'Model ready to view' :
+                    splatFileStatus === "unavailable" ? 'Needs training' : 'Checking status...'
+                  }
+                </span>
+              </div>
+            </div>
+
+            {/* Show progress if training is in progress */}
+            {isTraining && renderProgressStatus()}
+
+            {/* Show loading indicator when checking status */}
+            {splatFileStatus === "loading" && !isTraining && (
+              <div className="flex justify-center items-center py-8">
+                <Loader2 className="w-8 h-8 text-teal-500 animate-spin" />
+                <span className="ml-3 text-gray-600">Loading project status...</span>
+              </div>
+            )}
+            
+            {/* Show View button if splat file is available */}
+            {splatFileStatus === "available" && !isTraining && (
+              <div className="mt-6">
                 <button
                   onClick={handleViewRendering}
-                  className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200"
+                  className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 shadow-md flex items-center justify-center"
                 >
+                  <Eye className="w-5 h-5 mr-2" />
                   View 3D Rendering
                 </button>
-              )}
-              
-              {/* Show Train button if needed */}
-              {splatFileStatus === "unavailable" && !isTraining && (
-                <>
-                  {!instanceRunning ? (
-                    <p className="mt-4 text-gray-500 text-sm">Start the instance to train your model</p>
-                  ) : (
-                    <button 
-                      onClick={handleTrain}
-                      disabled={isTraining}
-                      className={`mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded transition-colors duration-200 ${
-                        isTraining ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'
-                      }`}
-                    >
-                      {isTraining ? 'Training...' : 'Train 3D Model'}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
+                <p className="text-xs text-center text-gray-500 mt-2">
+                  Opens the 3D viewer in a new browser tab
+                </p>
+              </div>
+            )}
+            
+            {/* Show Train button if needed */}
+            {splatFileStatus === "unavailable" && !isTraining && (
+              <div className="mt-6">
+                {!instanceRunning ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm flex items-center">
+                    <AlertCircle className="w-5 h-5 mr-2 flex-shrink-0" />
+                    <p>You need to start the instance before training your model.</p>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={handleTrain}
+                    disabled={isTraining}
+                    className={`w-full py-3 rounded-lg transition-colors duration-200 shadow-md flex items-center justify-center ${
+                      isTraining 
+                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed' 
+                        : 'bg-teal-600 text-white hover:bg-teal-700'
+                    }`}
+                  >
+                    <PlayCircle className="w-5 h-5 mr-2" />
+                    {isTraining ? 'Training in progress...' : 'Train 3D Model'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
