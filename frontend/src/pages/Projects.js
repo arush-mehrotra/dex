@@ -82,16 +82,21 @@ const Projects = () => {
         // If the instance didn't start correctly, update the status
         setInstanceStatus("stopped");
         setError("Failed to start instance. Please try again later.");
-      } else if (response.data.instanceIP) {
-        // Update instance details if available
-        setInstanceDetails({
-          ip: response.data.instanceIP,
-          region: response.data.region,
-          type: response.data.instanceType,
-          id: response.data.instanceId
-        });
+      } else {
+        // Success case - instance is launching or already exists
+        // Even if IP isn't available yet, keep the loading status
+        setInstanceStatus("loading");
+        
+        // Store any available instance details
+        if (response.data.instanceIP) {
+          setInstanceDetails({
+            ip: response.data.instanceIP,
+            region: response.data.region,
+            type: response.data.instanceType,
+            id: response.data.instanceId
+          });
+        }
       }
-      // No need for additional polling - the useEffect will handle it
     } catch (error) {
       console.error("Error starting instance:", error);
       setError("Failed to start instance. Please try again later. Instance capacity may be full.");
