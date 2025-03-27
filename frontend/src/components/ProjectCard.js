@@ -28,9 +28,13 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
     message: '',
     startTime: null
   });
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [trainingViewerUrl, setTrainingViewerUrl] = useState(null);
   const socketRef = useRef(null);
   const modalRef = useRef(null);
+  const timerIntervalRef = useRef(null);
+  const heartbeatIntervalRef = useRef(null);
+  const reconnectAttemptRef = useRef(0);
 
   // Create a formatted date for display
   const formattedDate = new Date().toLocaleDateString('en-US', {
@@ -60,22 +64,113 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
   useEffect(() => {
     // Only create the socket if the user is logged in
     if (user) {
+      // Clear any existing intervals
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+      
+      // Socket.IO configuration with reconnection options
       const socket = io("http://localhost:8000", {
-        withCredentials: true
+        withCredentials: true,
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
+        transports: ['websocket', 'polling']
       });
+      
       socketRef.current = socket;
 
       // Set up event listeners for the socket
       socket.on("connect", () => {
         console.log("Socket connected:", socket.id);
+        reconnectAttemptRef.current = 0;
+        
+        // If modal is open, re-subscribe to the room
+        if (isModalOpen && user) {
+          const userId = user.sub.split('|')[1];
+          socket.emit('subscribe', {
+            userId: userId,
+            projectId: project
+          });
+        }
+        
+        // Setup heartbeat interval to keep connection alive
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+        }
+        
+        heartbeatIntervalRef.current = setInterval(() => {
+          if (socket.connected) {
+            socket.emit('ping', (response) => {
+              console.log("Heartbeat response:", response);
+            });
+          }
+        }, 30000); // Send heartbeat every 30 seconds
       });
-
+      
       socket.on("connect_error", (error) => {
         console.error("Socket connection error:", error);
+      });
+      
+      socket.on("reconnect_attempt", (attemptNumber) => {
+        reconnectAttemptRef.current = attemptNumber;
+        console.log(`Socket reconnection attempt ${attemptNumber}`);
+      });
+      
+      socket.on("reconnect", (attemptNumber) => {
+        console.log(`Socket reconnected after ${attemptNumber} attempts`);
+        
+        // If modal is open, re-subscribe to the room
+        if (isModalOpen && user) {
+          const userId = user.sub.split('|')[1];
+          socket.emit('subscribe', {
+            userId: userId,
+            projectId: project
+          });
+        }
+      });
+      
+      socket.on("reconnect_error", (error) => {
+        console.error("Socket reconnection error:", error);
+      });
+      
+      socket.on("reconnect_failed", () => {
+        console.error("Socket reconnection failed");
+        
+        if (isTraining) {
+          setTrainingProgress(prev => ({
+            ...prev,
+            status: 'warning',
+            message: 'Connection lost. Training may still be in progress in the background.'
+          }));
+        }
+      });
+      
+      socket.on("disconnect", (reason) => {
+        console.log(`Socket disconnected. Reason: ${reason}`);
+        
+        // If the server initiated the disconnect, attempt to reconnect
+        if (reason === 'io server disconnect') {
+          socket.connect();
+        }
+      });
+
+      socket.on("subscribeAck", (data) => {
+        console.log("Subscription acknowledged:", data);
       });
 
       socket.on("trainingStatus", (data) => {
         console.log("Training status update:", data);
+        
+        // Update the training progress state
         setTrainingProgress(prev => ({
           ...prev,
           step: data.step,
@@ -86,8 +181,18 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
         // If we receive a viewerUrl, store it
         if (data.viewerUrl) {
           setTrainingViewerUrl(data.viewerUrl);
+          console.log("Viewer URL set:", data.viewerUrl);
         }
 
+        // Add detailed logging to debug step transitions
+        if (data.step === 'process' && data.status === 'completed') {
+          console.log("Process step completed, training should begin soon");
+        }
+        
+        if (data.step === 'train' && data.status === 'running') {
+          console.log("Train step started, updating UI");
+        }
+        
         // Reset the viewer URL when training completes or errors
         if (data.status === 'completed' || data.status === 'error') {
           setTrainingViewerUrl(null);
@@ -96,6 +201,12 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
         // If final step is completed, update the UI accordingly
         if (data.step === 'final' && data.status === 'completed') {
           setIsTraining(false);
+          
+          // Stop the elapsed time counter
+          if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
+          }
           
           // Update the splat file URL if it's available
           if (data.splatPath) {
@@ -109,35 +220,34 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
         // If there's an error, stop training
         if (data.status === 'error') {
           setIsTraining(false);
+          
+          // Stop the elapsed time counter
+          if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
+          }
         }
       });
 
       // Clean up the socket when component unmounts
       return () => {
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = null;
+        }
+        
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current);
+          timerIntervalRef.current = null;
+        }
+        
         if (socketRef.current) {
           socketRef.current.disconnect();
+          socketRef.current = null;
         }
       };
     }
-  }, [user]);
-
-  // Subscribe to training updates for this project when modal opens
-  useEffect(() => {
-    if (isModalOpen && user && socketRef.current) {
-      const userId = user.sub.split('|')[1];
-      
-      // Subscribe to updates for this specific project
-      socketRef.current.emit('subscribe', {
-        userId: userId,
-        projectId: project
-      });
-      
-      return () => {
-        // No specific cleanup needed here since we maintain the socket
-        // connection at the component level
-      };
-    }
-  }, [isModalOpen, user, project]);
+  }, [user, isModalOpen, project, isTraining]);
 
   const handleDelete = () => {
     if (window.confirm(`Are you sure you want to delete the project "${project}"?`)) {
@@ -189,15 +299,41 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
 
   const handleTrain = async () => {
     setIsTraining(true);
+    const startTime = new Date();
     setTrainingProgress({
       step: 'starting',
       status: 'running',
       message: 'Initializing training process...',
-      startTime: new Date()
+      startTime: startTime
     });
     
+    // Start the elapsed time counter
+    setElapsedSeconds(0);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+    
+    timerIntervalRef.current = setInterval(() => {
+      setElapsedSeconds(prev => prev + 1);
+    }, 1000);
+    
     try {
+      // Ensure we're connected to socket.io before starting
+      if (socketRef.current && !socketRef.current.connected) {
+        console.log("Socket disconnected, attempting to reconnect...");
+        socketRef.current.connect();
+      }
+
       const userId = user.sub.split('|')[1];
+      
+      // Re-subscribe to the room to ensure we receive updates
+      if (socketRef.current) {
+        socketRef.current.emit('subscribe', {
+          userId: userId,
+          projectId: project
+        });
+      }
+      
       const response = await axios.post('http://localhost:8000/lambda/train', {
         userId,
         projectName: project
@@ -231,6 +367,13 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
         message: `Training failed: ${error.message || 'Unknown error'}`
       }));
       setIsTraining(false);
+      
+      // Stop the timer
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      
       alert("Failed to train model. Please try again later.");
     }
   };
@@ -245,9 +388,29 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
       return index >= 0 ? index + 1 : 0;
     };
     
+    const getStepLabel = (step) => {
+      switch(step) {
+        case 'starting': return 'Starting';
+        case 'download': return 'Downloading files';
+        case 'unzip': return 'Unzipping files';
+        case 'setup': return 'Setting up';
+        case 'process': return 'Processing video';
+        case 'train': return 'Training 3D model';
+        case 'export': return 'Exporting model';
+        case 'convert': return 'Converting format';
+        case 'upload': return 'Uploading model';
+        case 'cleanup': return 'Cleaning up';
+        case 'final': return 'Finalizing';
+        default: return 'Processing';
+      }
+    };
+    
     const totalSteps = 11; // Total number of possible steps
     const currentStep = getStepNumber(trainingProgress.step);
     const progressPercentage = Math.max(5, Math.min(100, (currentStep / totalSteps) * 100));
+    
+    // Display current step prominently
+    const currentStepLabel = getStepLabel(trainingProgress.step);
     
     const getStatusColor = (status) => {
       switch (status) {
@@ -259,22 +422,31 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
       }
     };
     
-    const elapsedTime = trainingProgress.startTime 
-      ? Math.floor((new Date() - trainingProgress.startTime) / 1000)
-      : 0;
-    
     const formatTime = (seconds) => {
       const mins = Math.floor(seconds / 60);
       const secs = seconds % 60;
       return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
     
+    // Show a reconnecting indicator if we're trying to reconnect
+    const isReconnecting = reconnectAttemptRef.current > 0;
+    
     return (
       <div className="mt-6 bg-gray-50 rounded-lg p-4 border border-gray-200">
-        <div className="flex justify-between mb-3">
-          <span className="text-sm font-medium text-gray-700">{trainingProgress.message}</span>
-          <span className="text-sm font-medium bg-gray-200 rounded-full px-2 py-0.5 text-gray-700">{formatTime(elapsedTime)}</span>
+        {isReconnecting && (
+          <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-700 text-sm flex items-center">
+            <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+            <span>Reconnecting to server... (Attempt {reconnectAttemptRef.current})</span>
+          </div>
+        )}
+        
+        <div className="flex justify-between mb-1">
+          <span className="text-sm font-medium text-gray-700">
+            <strong>Step {currentStep}/{totalSteps}:</strong> {currentStepLabel}
+          </span>
+          <span className="text-sm font-medium bg-gray-200 rounded-full px-2 py-0.5 text-gray-700">{formatTime(elapsedSeconds)}</span>
         </div>
+        <div className="text-xs text-gray-600 mb-3">{trainingProgress.message}</div>
         <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
           <div 
             className={`h-3 rounded-full ${getStatusColor(trainingProgress.status)} transition-all duration-500 ease-in-out`} 
@@ -283,7 +455,7 @@ const ProjectCard = ({ project, onDelete, instanceRunning }) => {
         </div>
         
         {/* Add the training viewer link when available */}
-        {trainingProgress.step === 'train' && trainingProgress.status === 'running' && trainingViewerUrl && (
+        {trainingProgress.step === 'train' && (trainingProgress.status === 'running' || trainingProgress.status === "heartbeat") && trainingViewerUrl && (
           <div className="mt-4">
             <a 
               href={trainingViewerUrl} 

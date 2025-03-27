@@ -61,6 +61,7 @@ const Projects = () => {
         setInstanceStatus("loading");
         setInstanceDetails(response.data.instance);
       } else {
+        console.log("instanceStatus in checkInstanceStatus", instanceStatus);
         setInstanceStatus("stopped");
         setInstanceDetails(null);
       }
@@ -93,13 +94,16 @@ const Projects = () => {
       const response = await axios.post("http://localhost:8000/lambda/start_instance");
       if (response.data.instance_status !== "launched" && 
           response.data.instance_status !== "existing") {
+        console.log("instanceStatus in handleStartInstance", instanceStatus);
         // If the instance didn't start correctly, update the status
         setInstanceStatus("stopped");
         setError("Failed to start instance. Please try again later.");
       } else {
-        // Success case - instance is launching or already exists
-        // Even if IP isn't available yet, keep the loading status
-        setInstanceStatus("loading");
+        // Success case - update to running if it's an existing instance or
+        // keep as loading if it's just launched (will be updated by status check)
+        if (response.data.instance_status === "existing") {
+          setInstanceStatus("running");
+        }
         
         // Store any available instance details
         if (response.data.instanceIP) {
@@ -140,15 +144,19 @@ const Projects = () => {
     setShowPopup(false);
   };
 
+  // Polling mechanism for instance status
   useEffect(() => {
     if (user && user.sub) {
       checkInstanceStatus();
       fetchProjects();
+      
+      // Regular polling for instance status
       const statusCheckInterval = setInterval(() => {
         if (instanceStatus === "loading") {
           checkInstanceStatus();
         }
-      }, 10000); // Check more frequently (every 10 seconds)
+      }, 20000); // Check every 20 seconds
+      
       return () => clearInterval(statusCheckInterval);
     }
   }, [user, instanceStatus, fetchProjects, checkInstanceStatus]);
@@ -245,12 +253,12 @@ const Projects = () => {
                       <span>Instance:</span>
                       <span className="ml-1 capitalize">{instanceStatus === "checking" ? "Checking..." : instanceStatus === "loading" ? "Starting..." : instanceStatus}</span>
                     </div>
-                    {instanceStatus === "running" && (
+                    {/* {instanceStatus === "running" && (
                       <div className="flex flex-col text-xs text-gray-600">
                         {getInstanceTypeLabel()}
                         {getRegionLabel()}
                       </div>
-                    )}
+                    )} */}
                   </div>
                 </div>
               </div>

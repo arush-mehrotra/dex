@@ -250,8 +250,9 @@ async function processData(ssh, containerId, userId, projectName, outputDir, io,
   }
   
   // Construct the processing command
+  // Updated to use a case-insensitive file pattern for both .MP4 and .mp4
   const processCommand = `sudo docker exec ${containerId} bash -c 'cd /workspace/${userId}/${projectName} && \
-  ns-process-data video --data ./*.MP4 --output-dir ${outputDir} --num-downscales=0 --gpu'`;
+  ns-process-data video --data ./*.mp4 --output-dir ${outputDir} --num-downscales=0 --gpu'`;
   
   console.log("Executing command with streaming output:", processCommand);
   
@@ -433,12 +434,34 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId, req) {
   const io = req ? req.app.get('io') : null;
   const room = `${userId}_${projectName}`;
   
+  // Current step tracker for heartbeat
+  let currentStep = 'starting';
+  
+  // Heartbeat function to keep socket connection alive
+  const sendHeartbeat = () => {
+    if (io && room) {
+      io.to(room).emit('trainingStatus', {
+        step: currentStep,
+        status: 'heartbeat',
+        message: `Still working on ${currentStep}...`,
+        timestamp: new Date().toISOString()
+      });
+    }
+  };
+  
+  // Set up heartbeat interval
+  let heartbeatInterval = null;
   if (io) {
+    heartbeatInterval = setInterval(sendHeartbeat, 30000); // Send heartbeat every 15 seconds
+    
+    // Send initial status
     io.to(room).emit('trainingStatus', {
       step: 'overall',
       status: 'started',
       message: 'Starting training process...'
     });
+  } else {
+    console.log("No Socket.IO instance available, heartbeat disabled");
   }
   
   try {
@@ -450,15 +473,26 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId, req) {
     });
 
     // Execute each step in sequence
+    currentStep = 'setup';
     const containerId = await setupDockerContainer(ssh, userId, projectName, io, room);
     
+    currentStep = 'process';
     await processData(ssh, containerId, userId, projectName, processedDataOutputDir, io, room);
     
+    currentStep = 'train';
     await trainModel(ssh, containerId, userId, projectName, processedDataOutputDir, io, room, instance_ip);
     
+    currentStep = 'export';
     await exportGaussianSplat(ssh, containerId, userId, projectName, meshOutputDir, io, room);
     
+    currentStep = 'cleanup';
     await stopDockerContainer(ssh, containerId, io, room);
+
+    // Clear heartbeat when done
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
 
     if (io) {
       io.to(room).emit('trainingStatus', {
@@ -476,6 +510,12 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId, req) {
   } catch (error) {
     console.error("Error in training routine:", error);
     
+    // Clear heartbeat on error
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+    
     if (io) {
       io.to(room).emit('trainingStatus', {
         step: 'overall',
@@ -492,6 +532,11 @@ async function lambdaTrainRoutine(instance_ip, projectName, userId, req) {
       },
     };
   } finally {
+    // Double-ensure heartbeat is cleared
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
     ssh.dispose();
   }
 }
@@ -887,8 +932,6 @@ router.post("/start_instance", async (req, res) => {
     );
 
     const availableData = instanceTypesResponse.data.data;
-
-    console.log(availableData);
 
     let selectedType = null;
     let selectedRegion = null;
