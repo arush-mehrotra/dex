@@ -762,6 +762,24 @@ router.post("/train", async (req, res) => {
     }
     console.log("File unzipped successfully");
     
+    const renameCommand = `mv $(find ${localFilePath} -iname ${projectName}.mp4) ${localFilePath}/${projectName}.mp4`
+    const renameResult = await runCommandviaSSH(
+      runningInstance.ip,
+      renameCommand
+    );
+    if (renameResult.command_status === "fail") {
+      if (io) {
+        io.to(room).emit('trainingStatus', {
+          step: 'rename',
+          status: 'error',
+          message: `Failed to rename file: ${renameResult.error.message}`
+        });
+      }
+      
+      throw new Error(`Failed to rename file: ${renameResult.error.message}`);
+    }
+    console.log("File renamed successfully");
+    
     if (io) {
       io.to(room).emit('trainingStatus', {
         step: 'unzip',
