@@ -762,7 +762,7 @@ router.post("/train", async (req, res) => {
     }
     console.log("File unzipped successfully");
     
-    const renameCommand = `mv $(find ${localFilePath} -iname ${projectName}.mp4) ${localFilePath}/${projectName}.mp4`
+    const renameCommand = `mv $(find ${localFilePath} -maxdepth 1 -iname *.mp4) ${localFilePath}/${projectName}.mp4`
     const renameResult = await runCommandviaSSH(
       runningInstance.ip,
       renameCommand
