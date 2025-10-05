@@ -99,7 +99,7 @@ async function sshSetup(instance_ip) {
 async function dockerSetup(instance_ip) {
   // use bash via ssh to run docker commands to pull in a docker image and start it
   docker_pull_command =
-    "sudo docker pull ghcr.io/nerfstudio-project/nerfstudio:latest";
+    "sudo docker pull ghcr.io/nerfstudio-project/nerfstudio@sha256:3af2836319a8da9cf3b2c2ecf7f5fb4dc8763d2bdbc871e37902a491b05a84c9";
 
   // run the docker pull command
   commandOutput = await runCommandviaSSH(instance_ip, docker_pull_command);
@@ -207,7 +207,7 @@ async function setupDockerContainer(ssh, userId, projectName, io, room) {
           -e XDG_DATA_HOME=/workspace/.local/share \
           -e XDG_CACHE_HOME=/workspace/.cache \
           -e MPLCONFIGDIR=/workspace/.config/matplotlib \
-          ghcr.io/nerfstudio-project/nerfstudio:latest tail -f /dev/null';
+          ghcr.io/nerfstudio-project/nerfstudio@sha256:3af2836319a8da9cf3b2c2ecf7f5fb4dc8763d2bdbc871e37902a491b05a84c9 tail -f /dev/null';
   
   const dockerResult = await ssh.execCommand(dockerRunCommand);
   console.log("[Docker Setup]", dockerResult.stdout);
@@ -761,6 +761,24 @@ router.post("/train", async (req, res) => {
       throw new Error(`Failed to unzip file: ${unzipResult.error.message}`);
     }
     console.log("File unzipped successfully");
+    
+    const renameCommand = `mv $(find ${localFilePath} -maxdepth 1 -iname *.mp4) ${localFilePath}/${projectName}.mp4`
+    const renameResult = await runCommandviaSSH(
+      runningInstance.ip,
+      renameCommand
+    );
+    if (renameResult.command_status === "fail") {
+      if (io) {
+        io.to(room).emit('trainingStatus', {
+          step: 'rename',
+          status: 'error',
+          message: `Failed to rename file: ${renameResult.error.message}`
+        });
+      }
+      
+      throw new Error(`Failed to rename file: ${renameResult.error.message}`);
+    }
+    console.log("File renamed successfully");
     
     if (io) {
       io.to(room).emit('trainingStatus', {
