@@ -5,6 +5,12 @@ Turn 2D videos into interactive 3D reconstructions using state-of-the-art photog
 - Frontend: React app with Auth0 authentication and a project workflow UI
 - Backend: Express.js API integrating AWS S3 for storage, Lambda Labs for on-demand GPU instances, and Nerfstudio for processing/training/export
 
+## 🎥 Demo
+
+**Example of 3-D reconstruction using dex.ai**
+
+![Dex Demo](./demo.gif)
+
 ## Features
 - Upload a video per project (e.g., MP4) to AWS S3
 - Spin up a Lambda Labs GPU instance on demand (and stop it when done)
